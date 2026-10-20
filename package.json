@@ -1,10 +1,28 @@
 {
   "name": "quick-preview",
   "version": "1.5.3",
-  "description": "Windows 空格键快速预览工具（类 macOS Preview）",
+  "description": "Windows 空格键快速预览工具（类 macOS Quick Look）",
   "main": "dist/main/main.js",
-  "author": "WorkBuddy",
+  "author": "andyann",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mengyuefeitian/quick-preview.git"
+  },
+  "homepage": "https://github.com/mengyuefeitian/quick-preview#readme",
+  "bugs": {
+    "url": "https://github.com/mengyuefeitian/quick-preview/issues"
+  },
+  "keywords": [
+    "quick-look",
+    "preview",
+    "windows",
+    "webview2",
+    "space-key",
+    "docx",
+    "pptx",
+    "pdf"
+  ],
   "scripts": {
     "dev:web": "vite",
     "dev:app": "electron .",
