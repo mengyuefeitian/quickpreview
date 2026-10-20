@@ -1,5 +1,11 @@
 # QuickPreview — Windows 空格键快速预览（系统级服务）
 
+[![Release](https://img.shields.io/github/v/release/mengyuefeitian/quick-preview?style=flat-square)](https://github.com/mengyuefeitian/quick-preview/releases/latest)
+[![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078d4?style=flat-square)](#)
+[![.NET](https://img.shields.io/badge/.NET-8.0-512bd4?style=flat-square)](#)
+
+**[⬇ 下载最新安装包](https://github.com/mengyuefeitian/quick-preview/releases/latest)**（`QuickPreview-Setup-<版本>-x64.exe`，双击安装）
+
 类 macOS Quick Look 的 **Windows 系统级预览服务**：安装/启动后常驻系统托盘，**不显示任何自己的窗口**。
 你照常在「文件资源管理器」里浏览、操作文件，选中一个（或多个）文件后按 **空格** 即弹出预览浮层，
 再按空格或 `Esc` 关闭，`←` `→` 切换同目录/选择集的下一个文件，滚轮在文档内翻页。
