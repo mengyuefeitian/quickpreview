@@ -12,5 +12,3 @@
 *.gif   binary
 *.woff  binary
 *.woff2 binary
-
-docs/screenshots/*.png binary

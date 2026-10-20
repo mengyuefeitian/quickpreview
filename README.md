@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/word-cover.png" width="80%" alt="Word 预览：封面、目录、页眉页脚与原文档一致">
+  <b>选中文件 → 按 <kbd>Space</kbd> → 看完按 <kbd>Esc</kbd></b>
 </p>
 
 ---
@@ -77,11 +77,6 @@ QuickPreview 因此被做成了一个**系统级服务**而不是一个应用：
 - **文件夹**：文件数 / 体积统计（超大目录 3 秒截断并标注"部分"）
 - **ZIP**：条目列表 + 搜索 + 行内直接预览图片和文本
 - **超大文本**：首屏 256KB 分块加载，滚到底继续读
-
-<p align="center">
-  <img src="docs/screenshots/word-toc.png" width="49%" alt="目录：点线、页码右对齐、多级缩进">
-  <img src="docs/screenshots/pdf.png" width="49%" alt="PDF 单页横向翻页">
-</p>
 
 ## 安装
 
