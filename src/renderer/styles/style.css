@@ -1,0 +1,395 @@
+:root {
+  --bg: #1e1e1e;
+  --bg-2: #252526;
+  --bg-3: #2d2d30;
+  --border: #3c3c3c;
+  --text: #e6e6e6;
+  --text-dim: #9a9a9a;
+  --accent: #4ea1ff;
+  --accent-2: #2f6fb0;
+  --sel: #094771;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  font-family: -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+  user-select: none;
+}
+
+#app { display: flex; flex-direction: column; height: 100vh; }
+
+/* 工具栏 */
+.toolbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 14px; background: var(--bg-2); border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+.toolbar-left { display: flex; align-items: center; gap: 10px; }
+.toolbar-right.hint { font-size: 12px; color: var(--text-dim); }
+.toolbar-right b { color: var(--text); }
+.btn {
+  background: var(--bg-3); color: var(--text); border: 1px solid var(--border);
+  padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px;
+}
+.btn:hover { background: #3a3a3d; border-color: var(--accent-2); }
+.count { font-size: 12px; color: var(--text-dim); margin-left: 6px; }
+kbd {
+  background: #3a3a3d; border: 1px solid #555; border-radius: 4px;
+  padding: 1px 6px; font-size: 11px; font-family: inherit;
+}
+
+/* 布局 */
+.layout { flex: 1 1 auto; display: flex; min-height: 0; }
+.sidebar {
+  width: 300px; flex: 0 0 300px; background: var(--bg-2);
+  border-right: 1px solid var(--border); overflow-y: auto; padding: 8px;
+}
+.empty-tip { color: var(--text-dim); font-size: 13px; text-align: center; padding: 40px 16px; line-height: 1.8; }
+
+.file-list { list-style: none; margin: 0; padding: 0; }
+.file-item {
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+  border-radius: 6px; cursor: pointer; margin-bottom: 3px;
+}
+.file-item:hover { background: var(--bg-3); }
+.file-item.active { background: var(--sel); }
+.file-item.active .fi-name { color: #fff; }
+.fi-icon {
+  width: 30px; height: 30px; flex: 0 0 30px; border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700; color: #fff;
+}
+.fi-meta { min-width: 0; }
+.fi-name { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fi-sub { font-size: 11px; color: var(--text-dim); }
+
+/* 预览区 */
+.preview-pane {
+  flex: 1 1 auto; position: relative; display: flex; flex-direction: column;
+  min-width: 0; background: #181818;
+}
+.preview-pane[data-open="false"] .preview-body,
+.preview-pane[data-open="false"] .preview-bar { display: none; }
+.preview-placeholder {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; color: var(--text-dim); gap: 14px;
+}
+.preview-pane[data-open="true"] .preview-placeholder { display: none; }
+.ph-icon { font-size: 64px; opacity: 0.4; }
+
+.preview-body {
+  flex: 1 1 auto; overflow: auto; display: flex; align-items: center; justify-content: center;
+}
+.preview-body.scroll-mode { align-items: stretch; justify-content: flex-start; }
+.preview-bar {
+  flex: 0 0 auto; padding: 6px 14px; background: var(--bg-2); border-top: 1px solid var(--border);
+  font-size: 12px; color: var(--text-dim); display: flex; justify-content: space-between; align-items: center;
+}
+.preview-bar .pb-name { color: var(--text); margin-right: 10px; }
+
+/* 各类内容 */
+.img-content { max-width: 100%; max-height: 100%; object-fit: contain; }
+
+.text-content {
+  width: 100%; height: 100%; margin: 0; padding: 24px 32px; overflow: auto;
+  white-space: pre-wrap; word-break: break-word; font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 14px; line-height: 1.6; color: #d4d4d4; background: #1e1e1e; user-select: text;
+}
+
+/* 分块文本：外层撑满并让 body 负责滚动，pre 不再自己滚（否则"加载更多"永远看不到） */
+.text-wrap { display: flex; flex-direction: column; min-height: 100%; width: 100%; flex: 1 0 auto; background: #1e1e1e; }
+.text-wrap .text-content {
+  flex: 1 1 auto; height: auto; overflow: visible; background: transparent;
+}
+.text-more {
+  display: flex; align-items: center; justify-content: center; gap: 14px;
+  padding: 16px 24px 28px; color: #8a8a8a; font-size: 12.5px;
+}
+.text-more-btn {
+  padding: 6px 16px; border-radius: 6px; cursor: pointer;
+  border: 1px solid #4a4a4d; background: #2b2b2e; color: #ddd; font-size: 12.5px;
+}
+.text-more-btn:hover { background: #37373b; border-color: #5d5d61; }
+
+.office-content { width: 100%; padding: 28px 36px; overflow: auto; background: #fff; color: #222; }
+.office-content img { max-width: 100%; }
+.office-content table { border-collapse: collapse; width: 100%; margin: 10px 0; }
+.office-content th, .office-content td { border: 1px solid #bbb; padding: 4px 8px; }
+.office-content pre { white-space: pre-wrap; }
+
+/* Word 高保真预览（docx-preview）
+   类名坑：docx-preview 用 options.className 派生类名
+     wrapper = `${className}-wrapper`，页面 = `section.${className}`
+   我们传 className:'docx-preview'，真实 DOM 就是
+     div.docx-preview-wrapper > section.docx-preview
+   （不是 README 里的 .docx-wrapper / section.docx，写错会导致页面查不到、整页空白） */
+.docx-viewer img { max-width: 100%; }
+
+/* 表格多 sheet 标签 */
+.sheet-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.sheet-tab { padding: 4px 12px; background: #e8e8e8; border-radius: 4px; cursor: pointer; font-size: 13px; color: #333; }
+.sheet-tab.active { background: var(--accent-2); color: #fff; }
+
+/* CSV：按 Excel 的样子展示（首行表头 + 行号列 + 隔行底色） */
+.csv-wrap { width: 100%; height: 100%; overflow: auto; background: #fff; }
+.csv-meta {
+  position: sticky; top: 0; left: 0; z-index: 3;
+  display: flex; gap: 14px; align-items: center;
+  padding: 6px 12px; font-size: 12px; color: #666;
+  background: #f7f8fa; border-bottom: 1px solid #dcdcdc;
+}
+.csv-meta b { color: #333; font-weight: 600; }
+.csv-grid {
+  border-collapse: separate; border-spacing: 0; font-size: 12.5px; color: #222;
+  font-variant-numeric: tabular-nums;
+}
+.csv-grid th, .csv-grid td {
+  border-right: 1px solid #dcdcdc; border-bottom: 1px solid #dcdcdc;
+  padding: 3px 9px; text-align: left; vertical-align: top;
+  max-width: 460px; white-space: pre; overflow: hidden; text-overflow: ellipsis;
+}
+.csv-grid thead th {
+  position: sticky; top: 0; z-index: 2;
+  background: #eef1f5; color: #333; font-weight: 600; white-space: nowrap;
+  border-bottom: 2px solid #c8ccd2;
+}
+.csv-grid .rn {
+  position: sticky; left: 0; z-index: 1;
+  background: #f3f4f6; color: #9a9a9a; text-align: right;
+  font-size: 11px; user-select: none; border-right: 1px solid #d0d0d0;
+}
+.csv-grid thead .rn { z-index: 3; }
+.csv-grid td.num { text-align: right; }
+.csv-grid tbody tr:nth-child(even) td:not(.rn) { background: #fafbfc; }
+.csv-grid tbody tr:hover td:not(.rn) { background: #eef5ff; }
+.csv-empty { color: #888; font-size: 13px; padding: 18px; }
+
+/* PDF：单页横向翻页。
+   注意：不要给 canvas 设 width/height 的 CSS 尺寸——之前 .pdf-page{width:100%} 只约束了宽度、
+   高度仍用像素属性，画面被上下压扁。这里尺寸全部由 JS 按容器等比算出后写进 style。 */
+.pdf-viewer { position: relative; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; overflow: auto; }
+/* margin:auto + overflow:auto：放大后内容超出窗口时四向都能滚到（flex 居中会裁掉左侧超出部分） */
+.pdf-stage { display: flex; align-items: center; justify-content: center; gap: 10px; margin: auto; padding: 8px 0; }
+.pdf-canvas { display: block; background: #fff; box-shadow: 0 3px 16px rgba(0,0,0,.55); }
+.pdf-modes {
+  position: absolute; top: 10px; right: 12px; display: flex; gap: 6px; z-index: 2;
+}
+.pdf-mode {
+  border: 1px solid #4a4a4d; background: rgba(38,38,40,.86); color: #cfcfcf;
+  border-radius: 6px; font-size: 12px; padding: 3px 10px; cursor: pointer; font-family: inherit;
+}
+.pdf-mode:hover { background: rgba(64,64,68,.92); color: #fff; }
+.pdf-mode.active { background: var(--accent-2); border-color: var(--accent-2); color: #fff; }
+.pdf-nav {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 42px; height: 72px; border: none; border-radius: 8px; cursor: pointer;
+  background: rgba(40,40,40,.72); color: #e6e6e6; font-size: 26px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+}
+.pdf-nav:hover { background: rgba(70,70,70,.9); }
+.pdf-nav.disabled { opacity: .25; cursor: default; }
+.pdf-prev { left: 10px; }
+.pdf-next { right: 10px; }
+
+/* .doc（OLE2 旧版 Word）：按 Word 页面观感还原（纸张 + 居中标题 + 等宽栅格表格） */
+.doc-page {
+  font-family: "宋体", SimSun, serif; line-height: 1.7; color: #000;
+  max-width: 860px; margin: 0 auto; padding: 40px 48px;
+}
+.doc-page p { margin: 0 0 6px; }
+.doc-page .doc-title {
+  text-align: center; font-size: 20px; font-weight: 700;
+  letter-spacing: 2px; margin: 0 0 18px;
+  font-family: "黑体", SimHei, "宋体", serif;
+}
+.doc-page table.doc-table {
+  border-collapse: collapse; width: 100%; margin: 0 0 12px;
+  table-layout: fixed;
+}
+.doc-page table.doc-table td {
+  border: 1px solid #7f7f7f; padding: 4px 6px; vertical-align: middle;
+  font-size: 13px; white-space: normal; word-break: break-all; line-height: 1.5;
+}
+.sheet-empty { color: #888; font-size: 13px; padding: 6px 0; }
+
+.loading { color: var(--text-dim); font-size: 14px; padding: 20px; }
+.error-box { color: #ff8080; padding: 20px; font-size: 13px; line-height: 1.6; }
+
+/* 文件夹预览 */
+.folder-view { width: 100%; padding: 24px 28px; color: #e6e6e6; }
+.fv-head { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; }
+.fv-icon { font-size: 46px; line-height: 1; }
+.fv-meta { min-width: 0; }
+.fv-name { font-size: 20px; font-weight: 600; color: #fff; word-break: break-all; }
+.fv-path { font-size: 12px; color: var(--text-dim); margin-top: 4px; word-break: break-all; }
+.fv-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 18px; }
+.fv-cell { background: #242424; border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; }
+.fv-k { font-size: 12px; color: var(--text-dim); }
+.fv-v { font-size: 17px; color: #fff; margin-top: 4px; font-weight: 600; }
+.fv-v.fv-err { color: #ff8080; font-size: 14px; }
+.fv-list { width: 100%; overflow: auto; }
+.fv-empty { color: var(--text-dim); font-size: 13px; padding: 8px 2px; }
+.fv-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.fv-table th { text-align: left; color: var(--text-dim); font-weight: 500;
+  padding: 6px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.fv-table td { padding: 5px 10px; border-bottom: 1px solid #2a2a2a; color: #d6d6d6;
+  word-break: break-all; }
+.fv-table td.num, .fv-table th.num { text-align: right; white-space: nowrap; }
+.fv-table tr:hover td { background: #2a2a2a; }
+
+/* 媒体 */
+.media-wrap { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; width: 100%; height: 100%; }
+.media-wrap video, .media-wrap audio { max-width: 90%; }
+.media-poster { font-size: 56px; opacity: .5; }
+
+/* ===== 预览浮层微边框 + 标题栏（仅服务模式）===== */
+.chrome { display: none; }
+
+body.overlay {
+  /* 整个预览窗口的微边框：窗体本身是无边框的，靠这 1px 勾出窗口轮廓 */
+  border: 1px solid #4a4a4d;
+  background: #141414;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .6);
+}
+body.overlay .chrome {
+  display: flex; flex: 0 0 auto; align-items: center; gap: 10px;
+  height: 34px; padding: 0 8px 0 12px;
+  background: linear-gradient(#2b2b2e, #232326);
+  border-bottom: 1px solid #3a3a3d;
+}
+.chrome-icon {
+  width: 18px; height: 18px; flex: 0 0 18px; border-radius: 4px;
+  background: #3a5f8f; color: #fff; font-size: 10px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+}
+.chrome-title {
+  flex: 1 1 auto; min-width: 0; font-size: 12.5px; color: #d8d8d8;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.chrome-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.chrome-btn {
+  background: #333336; color: #d0d0d0; border: 1px solid #48484b;
+  border-radius: 5px; font-size: 12px; padding: 3px 10px; cursor: pointer;
+  font-family: inherit; line-height: 1.5;
+}
+.chrome-btn:hover { background: #3f3f43; color: #fff; border-color: #5a5a5e; }
+.chrome-close { padding: 3px 9px; }
+.chrome-close:hover { background: #c0392b; border-color: #c0392b; color: #fff; }
+
+/* 浮层里隐藏工具栏/侧边栏，预览区铺满 */
+body.overlay .toolbar,
+body.overlay .sidebar { display: none; }
+body.overlay .layout { display: flex; min-height: 0; }
+body.overlay .preview-pane { position: relative; flex: 1 1 auto; background: #181818; }
+body.overlay .preview-placeholder { display: none; }
+.pb-index { margin-left: 10px; opacity: .8; }
+
+/* PPTX 幻灯片 */
+.slide {
+  position: relative; background: #fff; margin: 0 auto 16px; overflow: hidden;
+  box-shadow: 0 2px 12px rgba(0,0,0,.5);
+}
+.slide .shape { position: absolute; overflow: hidden; }
+.slide .shape p { margin: 0; }
+.slide img { width: 100%; height: 100%; object-fit: contain; }
+
+/* ---------- ZIP 压缩包 ---------- */
+.zip-view { display: flex; flex-direction: column; min-height: 100%; width: 100%; flex: 1 0 auto; background: #1e1e1e; color: #d4d4d4; }
+.zip-head {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 14px 20px; border-bottom: 1px solid #333; background: #232326;
+  position: sticky; top: 0; z-index: 2;
+}
+.zip-title { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; }
+.zip-icon { font-size: 16px; }
+.zip-name { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.zip-meta { display: flex; gap: 8px; flex-wrap: wrap; }
+.zip-k {
+  font-size: 12px; color: #9a9a9e; background: #2c2c30;
+  padding: 2px 8px; border-radius: 10px;
+}
+.zip-search {
+  margin-left: auto; width: 200px; padding: 5px 10px; border-radius: 6px;
+  border: 1px solid #45454a; background: #1b1b1d; color: #ddd; font-size: 12.5px;
+}
+.zip-search:focus { outline: none; border-color: #5c7fbf; }
+.zip-list { flex: 1 1 auto; }
+.zip-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.zip-table thead th {
+  position: sticky; top: 48px; z-index: 1;
+  text-align: left; padding: 8px 12px; font-weight: 600; color: #b9b9bd;
+  background: #26262a; border-bottom: 1px solid #3a3a3e; white-space: nowrap;
+}
+.zip-table th.num, .zip-table td.num { text-align: right; white-space: nowrap; }
+.zip-table td { padding: 6px 12px; border-bottom: 1px solid #2a2a2e; }
+.zip-row { cursor: pointer; }
+.zip-row:hover td { background: #2b2b30; }
+.zip-row.active td { background: #2f3a4d; }
+.zip-empty { padding: 18px 12px !important; color: #888; text-align: center; }
+.zip-preview { border-top: 1px solid #333; background: #202023; }
+.zip-pv-head {
+  display: flex; justify-content: space-between; gap: 12px;
+  padding: 10px 16px; font-size: 12.5px; color: #cfcfd3; border-bottom: 1px solid #303034;
+}
+.zip-pv-size { color: #8f8f93; }
+.zip-pv-body { padding: 12px 16px; max-height: 420px; overflow: auto; }
+.zip-pv-img { max-width: 100%; max-height: 380px; display: block; margin: 0 auto; }
+.zip-pv-text {
+  margin: 0; font-family: "Cascadia Code", Consolas, monospace; font-size: 12.5px;
+  line-height: 1.55; white-space: pre-wrap; word-break: break-word; color: #d8d8d8;
+}
+.zip-pv-tip { color: #9a9a9e; font-size: 12.5px; padding: 8px 0; }
+
+/* ---------- 底部缩放控件（PDF / Word 共用） ---------- */
+.zoom-ctl {
+  margin-left: auto; display: flex; align-items: center; gap: 4px;
+  padding-left: 10px; user-select: none;
+}
+.zoom-btn {
+  min-width: 24px; height: 22px; padding: 0 7px; border-radius: 5px; cursor: pointer;
+  border: 1px solid #4a4a4d; background: #2b2b2e; color: #cfcfd3;
+  font-size: 12px; line-height: 1; font-family: inherit;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.zoom-btn:hover { background: #37373b; border-color: #5d5d61; color: #fff; }
+.zoom-btn.disabled { opacity: .35; cursor: default; }
+.zoom-fit.active { background: var(--accent-2); border-color: var(--accent-2); color: #fff; }
+.zoom-label {
+  min-width: 44px; text-align: center; cursor: pointer; color: #d5d5d9;
+  font-variant-numeric: tabular-nums;
+}
+.zoom-label:hover { color: #fff; }
+/* 「适应窗口」状态下百分比是算出来的，颜色压低一点，表示不是用户手调的固定值 */
+.zoom-label.fit { color: #9a9aa2; }
+
+/* ---------- Word 单页 / 双页（docx-viewer） ---------- */
+.docx-viewer { position: relative; width: 100%; flex: 1 0 auto; min-height: 100%; overflow: auto; background: #f0f0f0; }
+.docx-stage {
+  display: flex; align-items: flex-start; justify-content: center; gap: 14px;
+  margin: auto; padding: 18px 24px; box-sizing: border-box;
+  /* 不能用 width: max-content：它和页面自身的百分比宽度互相依赖，会算成 0 宽导致整页不可见 */
+  width: 100%; min-height: 100%;
+}
+.docx-stage .docx-preview-wrapper { background: transparent !important; padding: 0 !important; display: contents; }
+.docx-stage section.docx-preview {
+  margin: 0 !important; box-shadow: 0 3px 14px rgba(0,0,0,.18) !important; flex: 0 0 auto;
+}
+
+/* Word 目录（TOC）条目：docx-preview 把制表位模拟成巨大的 word-spacing，
+   会把「1 概述 … 7」挤成三行且没有点线。这里重排成 [标题][点线][页码] 三段式。 */
+.docx-stage p.qp-toc-item { display: flex; align-items: baseline; text-indent: 0 !important; }
+.docx-stage p.qp-toc-item > .qp-toc-head { flex: 0 1 auto; min-width: 0; }
+.docx-stage p.qp-toc-item > .qp-toc-leader {
+  flex: 1 1 auto; min-width: 16px; margin: 0 6px;
+  border-bottom: 1px dotted currentColor; transform: translateY(-0.28em);
+}
+.docx-stage p.qp-toc-item > .qp-toc-num { flex: 0 0 auto; white-space: nowrap; }
+/* 目录条目在 docx-preview 里是 <a>（w:hyperlink），浏览器默认给蓝色 + 下划线，
+   和 Word 的观感差很远；点线本身已经表示层级，这里还原成正文色。 */
+.docx-stage p.qp-toc-item a { color: inherit !important; text-decoration: none !important; }
+.docx-modes { position: absolute; top: 10px; right: 12px; display: flex; gap: 6px; z-index: 2; }
+.docx-modes .pdf-mode { font-family: inherit; }

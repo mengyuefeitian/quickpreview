@@ -1,0 +1,62 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <AssemblyName>QuickPreview</AssemblyName>
+    <RootNamespace>QuickPreview</RootNamespace>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <!-- 自包含发布：安装包不依赖目标机器安装 .NET 运行时 -->
+    <SelfContained>true</SelfContained>
+    <PlatformTarget>x64</PlatformTarget>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <!-- 版本号（单一来源）。规则：修 Bug 第3位+1；含功能第2位+1（打包前确认）；架构变更第1位+1。
+         改动时同步：dotnet\setup.iss 的 MyAppVersion、package.json 的 version -->
+    <Version>1.5.3</Version>
+    <AssemblyVersion>1.5.3.0</AssemblyVersion>
+    <FileVersion>1.5.3.0</FileVersion>
+    <!-- 必须以普通权限运行（与资源管理器同级），否则读不到选中文件 -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Product>QuickPreview</Product>
+    <AssemblyTitle>QuickPreview — 空格键快速预览</AssemblyTitle>
+    <Description>类 macOS Quick Look 的 Windows 空格键快速预览服务</Description>
+    <ApplicationIcon>..\..\assets\app.ico</ApplicationIcon>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- WebView2 SDK：若此版本还原失败，执行 dotnet add package Microsoft.Web.WebView2 取最新 -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 编译期生成的中间文件（AssemblyInfo.cs 等）永远不参与编译，
+         否则改用外部 obj 目录时会报 CS0579「特性重复」 -->
+    <Compile Remove="obj\**" />
+    <Compile Remove="bin\**" />
+    <Compile Remove="_build\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Vite 构建的 Web 预览引擎，作为 webroot 随程序一起分发 -->
+    <Content Include="..\..\dist\renderer\**">
+      <Link>webroot\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!-- 应用图标：嵌入 exe + 复制为 QuickPreview.ico 供托盘加载 -->
+    <Content Include="..\..\assets\app.ico">
+      <Link>QuickPreview.ico</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!-- ffmpeg 二进制，用于 ape/mkv 等格式的按需转码（需先 npm install 拉取 ffmpeg-static） -->
+    <Content Include="..\..\node_modules\ffmpeg-static\ffmpeg.exe"
+             Condition="Exists('..\..\node_modules\ffmpeg-static\ffmpeg.exe')">
+      <Link>ffmpeg.exe</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>

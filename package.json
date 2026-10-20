@@ -1,0 +1,71 @@
+{
+  "name": "quick-preview",
+  "version": "1.5.3",
+  "description": "Windows 空格键快速预览工具（类 macOS Preview）",
+  "main": "dist/main/main.js",
+  "author": "WorkBuddy",
+  "license": "MIT",
+  "scripts": {
+    "dev:web": "vite",
+    "dev:app": "electron .",
+    "build:web": "vite build",
+    "build:main": "tsc -p tsconfig.main.json",
+    "build": "npm run build:web && npm run build:main",
+    "pack": "npm run build && electron-builder --win --publish=never",
+    "pack:dir": "npm run build && electron-builder --win --dir --publish=never"
+  },
+  "dependencies": {
+    "docx-preview": "^0.4.1",
+    "ffmpeg-static": "^5.2.0",
+    "jszip": "^3.10.1",
+    "mammoth": "^1.8.0",
+    "pdfjs-dist": "^4.4.168",
+    "word-extractor": "^1.0.4",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "electron": "^31.3.0",
+    "electron-builder": "^24.13.3",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.0"
+  },
+  "build": {
+    "appId": "com.workbuddy.quickpreview",
+    "productName": "QuickPreview",
+    "electronDist": ".electron-dist/electron-v31.7.7-win32-x64",
+    "copyright": "Copyright © 2026 WorkBuddy",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json",
+      "!node_modules/ffmpeg-static"
+    ],
+    "extraResources": [
+      {
+        "from": "node_modules/ffmpeg-static",
+        "to": "ffmpeg-static",
+        "filter": [
+          "ffmpeg.exe",
+          "ffmpeg"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": "x64"
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "QuickPreview"
+    }
+  }
+}

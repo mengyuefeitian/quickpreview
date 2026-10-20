@@ -1,0 +1,14 @@
+const secs = Array.from(document.querySelectorAll('.docx-preview-wrapper > section'));
+const stage = document.querySelector('.docx-stage');
+if (stage) stage.style.zoom = '';
+const s = secs[6];
+const was = s.style.display; s.style.display = 'block';
+const art = s.querySelector(':scope > article');
+const item = art.querySelector('p.qp-toc-item');
+const out = [];
+out.push('p style=' + (item.getAttribute('style') || ''));
+out.push('head style=' + (item.querySelector('.qp-toc-head').getAttribute('style') || ''));
+out.push('head HTML:');
+out.push(item.querySelector('.qp-toc-head').outerHTML.replace(/></g, '>\n<'));
+s.style.display = was;
+return out.join('\n');

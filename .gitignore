@@ -1,0 +1,32 @@
+# 依赖与构建产物
+node_modules/
+dist/
+release/
+.electron-dist/
+publish/
+installer/
+
+# .NET 中间产物
+dotnet/**/bin/
+dotnet/**/obj/
+.dotnet-sdk/
+_build/
+.build/
+
+# 日志
+*.log
+logs/
+
+# 测试样本：大文件由 make_samples.py 生成，不入库
+test-samples/big_book.txt
+test-samples/big.pdf
+test-samples/_regress*.txt
+test-samples/e2e_result.txt
+test-samples/__pycache__/
+
+# 系统/编辑器
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
+.idea/

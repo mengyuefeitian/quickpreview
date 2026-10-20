@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>QuickPreview</title>
+  </head>
+  <body>
+    <div id="app">
+      <!-- 预览浮层的微边框 + 标题栏（仅服务模式下显示）：
+           顶部显示文件名，右上角是「用默认程序打开」与「关闭」 -->
+      <header class="chrome" id="chrome">
+        <div class="chrome-icon" id="chrome-icon">␣</div>
+        <div class="chrome-title" id="chrome-title">QuickPreview</div>
+        <div class="chrome-actions">
+          <button id="chrome-open" class="chrome-btn" type="button"
+                  title="用系统默认程序打开（预览会关闭）">用默认程序打开</button>
+          <button id="chrome-close" class="chrome-btn chrome-close" type="button"
+                  title="关闭预览（Esc / 空格）">✕</button>
+        </div>
+      </header>
+
+      <header class="toolbar">
+        <div class="toolbar-left">
+          <button id="btn-files" class="btn">打开文件</button>
+          <button id="btn-folder" class="btn">打开文件夹</button>
+          <span id="count" class="count"></span>
+        </div>
+        <div class="toolbar-right hint">
+          空格 预览 / 关闭 · <b>← →</b> 切换文件 · <b>↑ ↓</b> 选择 · <b>Esc</b> 关闭 · 滚轮翻页
+        </div>
+      </header>
+
+      <main class="layout">
+        <aside class="sidebar" id="sidebar">
+          <div class="empty-tip" id="empty-tip">
+            点击「打开文件」或「打开文件夹」<br />选择文件后按 <kbd>空格</kbd> 预览
+          </div>
+          <ul class="file-list" id="file-list"></ul>
+        </aside>
+
+        <section class="preview-pane" id="preview-pane" data-open="false">
+          <div class="preview-placeholder" id="preview-placeholder">
+            <div class="ph-icon">␣</div>
+            <div>选中文件后按 <kbd>空格</kbd> 预览</div>
+          </div>
+          <div class="preview-body" id="preview-body"></div>
+          <div class="preview-bar" id="preview-bar"></div>
+        </section>
+      </main>
+    </div>
+    <script>
+      // 最早的错误捕获：模块解析/加载阶段的异常（例如某个依赖在目标 WebView2 版本上
+      // 语法不支持）不会进入 main.ts 里注册的 window.onerror，页面会"静默全白"。
+      // 这里用内联脚本兜底，把异常直接回传宿主日志，便于定位。
+      (function () {
+        function send(obj) {
+          try {
+            var w = window.chrome && window.chrome.webview;
+            if (w) w.postMessage(obj);
+            else if (window.qp) window.qp.postMessage(JSON.stringify(obj));
+          } catch (e) { }
+        }
+        window.addEventListener('error', function (e) {
+          var t = e.target;
+          if (t && t !== window && (t.tagName === 'SCRIPT' || t.tagName === 'LINK')) {
+            send({ type: 'error', message: '资源加载失败：<' + t.tagName + '> ' + (t.src || t.href) });
+            return;
+          }
+          send({ type: 'error', message: '页面加载异常：' + (e.message || '') + ' @ ' + (e.filename || '') + ':' + e.lineno });
+          if (e.error && e.error.stack) send({ type: 'error', message: '堆栈：' + e.error.stack });
+        }, true);
+        window.addEventListener('unhandledrejection', function (e) {
+          var r = e.reason;
+          send({ type: 'error', message: 'unhandledrejection：' + ((r && r.stack) || (r && r.message) || String(r)) });
+        });
+      })();
+    </script>
+    <script type="module" src="/main.ts"></script>
+  </body>
+</html>

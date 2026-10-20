@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
+  <assemblyIdentity version="1.0.0.0" name="QuickPreview.app" />
+
+  <!--
+    关键：必须以 asInvoker（普通权限）运行。
+    本程序需要与「文件资源管理器」处于同一完整性级别，才能通过 Shell COM 读取其选中文件。
+    若以管理员（高完整性级别）运行，跨 UIPI 边界的 COM 调用会被系统拒绝，
+    表现为"在资源管理器里按空格没有任何反应"。
+  -->
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
+    <security>
+      <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
+        <requestedExecutionLevel level="asInvoker" uiAccess="false" />
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+
+  <!-- 启用公共控件 v6，保证 WinForms 视觉样式正常 -->
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity
+        type="win32"
+        name="Microsoft.Windows.Common-Controls"
+        version="6.0.0.0"
+        processorArchitecture="*"
+        publicKeyToken="6595b64144ccf1df"
+        language="*" />
+    </dependentAssembly>
+  </dependency>
+</assembly>
