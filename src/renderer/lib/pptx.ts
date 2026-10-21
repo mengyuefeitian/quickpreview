@@ -957,7 +957,7 @@ async function applyBackground(
     //
     // 【坑】千万别在这里写 slide.style.background = '#ffffff' 兜底：
     // background 是简写属性，赋值会把 background-image 一并重置成 none，
-    // 结果"版式里配了背景图片"的胶片（厂商主打胶片都是这种）全变白底。
+    // 结果"版式里配了背景图片"的胶片（厂商模板大量用这种写法）全变白底。
     await applyFill(zip, bgPr, rels, theme, slide);
     if (!slide.style.backgroundImage && !slide.style.backgroundColor && !slide.style.background) {
       slide.style.backgroundColor = '#ffffff';
