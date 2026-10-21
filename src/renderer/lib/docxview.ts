@@ -281,42 +281,115 @@ function pageBox(sec: HTMLElement): PageBox {
   return { pageH, padT, padB, inner: Math.max(120, pageH - padT - padB) };
 }
 
+/** 量一个块的实际占用高度（含上下外边距）。 */
+function blockHeight(k: HTMLElement): number {
+  const cs = getComputedStyle(k);
+  return k.getBoundingClientRect().height
+    + (parseFloat(cs.marginTop) || 0) + (parseFloat(cs.marginBottom) || 0);
+}
+
+// 一张表如果本身就超过一页，整块塞进一页会被撑成"长页"（用户看到的：
+// 表格没按 A4 断开，页面被拉得老长，翻页手感全乱）。
+// Word 的做法是在行边界处断开、续页接着排版，所以这里把表按行拆成几张，
+// 交给正常的分页逻辑去分配。
+//
+// 首段沿用原表元素（样式/边框/宽度原封不动），后续段克隆空壳 + colgroup ——
+// 不复制列宽的话，续页的列会退化成自动分配，和首页对不齐。
+// 导出仅供 test-samples/dev_docx_table_test.py 单元验证（生产入口不引用，会被 tree-shake 掉）
+export function splitTableByRows(
+  table: HTMLTableElement, firstLimit: number, restLimit: number = firstLimit
+): HTMLElement[] {
+  const thead = table.tHead;
+  // 表头行单独处理：它要复制到每一段，不能当成普通数据行搬来搬去
+  const bodyRows = (Array.from(table.rows) as HTMLElement[])
+    .filter((r) => !thead || r.parentElement !== thead);
+  if (bodyRows.length < 2) return [table];
+
+  const colgroup = table.querySelector(':scope > colgroup') as HTMLElement | null;
+  const heights = bodyRows.map((r) => r.getBoundingClientRect().height);
+
+  for (const r of bodyRows) r.remove();
+
+  const parts: HTMLElement[] = [table];
+  let cur: HTMLElement = table;
+  let acc = 0;
+  // 第一段只占「当前页剩余空间」，其后各段占满整页 —— 否则表格前面有标题/段落时，
+  // 第一段按整页高拆会放不下，只能整段换页，把上一页空掉大半。
+  let limit = firstLimit;
+  for (let i = 0; i < bodyRows.length; i++) {
+    // acc === 0 说明这一段刚开，单行再高也得放（否则会左右横跳、反复建表）
+    if (acc > 0 && acc + heights[i] > limit) {
+      const t = table.cloneNode(false) as HTMLTableElement;
+      t.removeAttribute('id');
+      if (colgroup) t.appendChild(colgroup.cloneNode(true));
+      if (thead) t.appendChild(thead.cloneNode(true));
+      cur.after(t);
+      parts.push(t);
+      cur = t;
+      acc = 0;
+      limit = restLimit;
+    }
+    cur.appendChild(bodyRows[i]);
+    acc += heights[i];
+  }
+  return parts;
+}
+
 // 把一节的内容按 limit（内容区高度）切成若干页，返回新建的页（按原顺序）
-function cutSection(sec: HTMLElement, limit: number): HTMLElement[] {
+export function cutSection(sec: HTMLElement, limit: number): HTMLElement[] {
   const art = sec.querySelector(':scope > article') as HTMLElement | null;
   if (!art) return [];
   const kids = Array.from(art.children) as HTMLElement[];
-  if (kids.length < 2) return [];      // 单块就超页，切不了，交回调用方
-
-  // 一次性量完所有子节点（含上下外边距），避免边搬边测反复重排
-  const heights = kids.map((k) => {
-    const cs = getComputedStyle(k);
-    return k.getBoundingClientRect().height
-      + (parseFloat(cs.marginTop) || 0) + (parseFloat(cs.marginBottom) || 0);
-  });
+  if (!kids.length) return [];
 
   const head = sec.querySelector(':scope > header');
   const foot = sec.querySelector(':scope > footer');
   const made: HTMLElement[] = [];
   let curArt = art;
   let acc = 0;
-  for (let i = 0; i < kids.length; i++) {
-    const kh = heights[i];
-    // 当前页已装了内容、再加这一段就溢出 ⇒ 另起一页。
-    // acc === 0 时不切：单个段落/表格本身就超过一页的话，硬塞到新页只会留个空页。
-    if (acc > 0 && acc + kh > limit) {
-      const ns = sec.cloneNode(false) as HTMLElement;   // 只复制标签 + class + style（纸张尺寸在 style 里）
-      ns.removeAttribute('id');
-      if (head) ns.appendChild(head.cloneNode(true));   // 页眉页脚是绝对定位在 section 里的
-      const na = document.createElement('article');
-      ns.appendChild(na);
-      if (foot) ns.appendChild(foot.cloneNode(true));
-      (made.length ? made[made.length - 1] : sec).after(ns);
-      made.push(ns);
-      curArt = na;
-      acc = 0;
+
+  const newPage = (): void => {
+    const ns = sec.cloneNode(false) as HTMLElement;   // 只复制标签 + class + style（纸张尺寸在 style 里）
+    ns.removeAttribute('id');
+    if (head) ns.appendChild(head.cloneNode(true));   // 页眉页脚是绝对定位在 section 里的
+    const na = document.createElement('article');
+    ns.appendChild(na);
+    if (foot) ns.appendChild(foot.cloneNode(true));
+    (made.length ? made[made.length - 1] : sec).after(ns);
+    made.push(ns);
+    curArt = na;
+    acc = 0;
+  };
+
+  // 一次性量完（含上下外边距），避免边搬边测反复重排。
+  // 队列会在拆表时就地插入新段，所以量好的高度也同步用数组维护。
+  const queue = kids.slice();
+  const qh = kids.map(blockHeight);
+
+  for (let i = 0; i < queue.length; i++) {
+    const k = queue[i];
+    let kh = qh[i];
+
+    // 「单块就超过一页」的表格：按行拆开再分配。
+    // 不拆的话 acc === 0 不会切，整张表只能塞在同一页 ⇒ 页面被撑成长页。
+    if (k.tagName === 'TABLE' && kh > limit) {
+      // 本页剩余空间不足三成时不要硬拆：那只拆得出两三行，
+      // 这几行在新页上独占一整页，比留白还浪费。整表挪到新页再按整页拆。
+      if (acc > 0 && limit - acc < limit * 0.3) newPage();
+      const room = acc > 0 ? limit - acc : limit;
+      const parts = splitTableByRows(k as HTMLTableElement, room, limit);
+      if (parts.length > 1) {
+        const hs = parts.map(blockHeight);
+        queue.splice(i, 1, ...parts);   // parts[0] 就是 k 本身，留在队列同一位置
+        qh.splice(i, 1, ...hs);
+        kh = hs[0];
+      }
     }
-    curArt.appendChild(kids[i]);
+
+    // 当前页已装了内容、再加这一段就溢出 ⇒ 另起一页。
+    // acc === 0 时不切：单个段落本身就超过一页的话，硬塞到新页只会留个空页。
+    if (acc > 0 && acc + kh > limit) newPage();
+    curArt.appendChild(queue[i]);
     acc += kh;
   }
   return made;

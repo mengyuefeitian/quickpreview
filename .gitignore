@@ -41,3 +41,5 @@ desktop.ini
 .DS_Store
 .vscode/
 .idea/
+# 长表格回归样本：由 make_longtable_docx.py 生成
+test-samples/longtable.docx
