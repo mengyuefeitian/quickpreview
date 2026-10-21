@@ -104,10 +104,10 @@ def transfer():
     st, t = g.call("GET", "/repos/%s" % TARGET)
     if st != 200:
         print("取正式仓库失败:", st)
-        return 0
+        return 0, []
     target_id = t["node_id"]
     issues = list_issues() or []
-    ok = 0
+    done = []
     for i in issues:
         q = """mutation($issue:ID!,$repo:ID!){
           transferIssue(input:{issueId:$issue,repositoryId:$repo}){
@@ -120,16 +120,28 @@ def transfer():
             continue
         node = r.get("data", {}).get("transferIssue", {}).get("issue", {})
         print("  #%s → %s 编号 %s" % (i["number"], TARGET, node.get("number")))
-        ok += 1
-    return ok
+        done.append(i["number"])
+    return len(done), done
 
 
 def rebuild(data):
-    """transfer 不可用时按备份重建（编号会从 1 开始，评论按顺序补发）。"""
+    """transfer 不可用时按备份重建（编号会从 1 开始，评论按顺序补发）。
+
+    两个必须注意的点：
+    - **按 created_at 升序创建**，否则新编号顺序会和原始反馈顺序相反
+      （API 默认返回 created desc，直接遍历会得到「新 #1 = 旧 #4」）。
+    - 「旧库是私有 → 新库公开」时 GitHub 明确禁止 transferIssue
+      （`Old issue cannot be transferred from private repository to public repository`），
+      这时只能走重建；而重建会丢失原始编号与时间，所以在正文头部补一行来源标记。
+    """
+    data = sorted(data, key=lambda x: x["created_at"])
     odd = 0
     for d in data:
+        head = "> 迁移自旧仓库 issue #%s（原反馈时间 %s）\n\n" % (
+            d["number"], _cst(d["created_at"]))
         st, r = g.call("POST", "/repos/%s/issues" % TARGET,
-                       {"title": d["title"], "body": d["body"], "labels": d["labels"]})
+                       {"title": d["title"], "body": head + d["body"],
+                        "labels": d["labels"]})
         if st not in (200, 201):
             print("  重建失败 #%s -> %s" % (d["number"], st))
             continue
@@ -143,6 +155,13 @@ def rebuild(data):
     return odd
 
 
+def _cst(iso):
+    """GitHub 返回的是 UTC，转成北京时间显示。"""
+    from datetime import datetime, timedelta, timezone
+    return datetime.strptime(iso, "%Y-%m-%dT%H:%M:%SZ").replace(
+        tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M")
+
+
 if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "check"
     if mode == "check":
@@ -154,10 +173,11 @@ if __name__ == "__main__":
         print("\n--- 1. 备份 issue ---")
         data = backup()
         print("\n--- 2. 转移 issue 到正式仓库 ---")
-        n = transfer()
+        n, done = transfer()
         if n < len(data):
-            print("转移未全部成功，按备份补齐剩余 %d 条：" % (len(data) - n))
-            rebuild(data[n:])
+            rest = [d for d in data if d["number"] not in done]
+            print("转移未全部成功，按备份补齐剩余 %d 条：" % len(rest))
+            rebuild(rest)
         print("\n--- 3. 结果 ---")
         st, ti = g.call("GET", "/repos/%s/issues?state=all&per_page=100" % TARGET)
         got = [x for x in ti if "pull_request" not in x] if isinstance(ti, list) else []
