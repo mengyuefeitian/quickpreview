@@ -5,10 +5,18 @@
 //   · 列表：路径、大小、压缩后大小、修改时间（带搜索过滤）
 //   · 点击文件：文本（前 512KB）或图片直接在下方预览；其它格式给出提示
 //
+// 两条路径：
+//   1. 常规包 → JSZip，能读内容；
+//   2. 加密包 / 用了 JSZip 不认识的算法的包 → JSZip 会整体抛错，
+//      此时退化到 zipdir 直读中央目录（见 zipdir.ts）：内容读不出来，
+//      但文件名、大小、时间戳都还在，照样把清单列出来，
+//      并明确告诉用户为什么只能看清单。
+//
 // 只读，不解压到磁盘。整个包用 JSZip 挂在内存里，几十 MB 的包能接受；
 // 超大包（>512MB）直接拒绝解析，避免把内存打满。
 import { el } from './util';
 import { postToHost } from './host';
+import { readZipDirectory, methodLabel, methodReadable, type ZipDirEntry } from './zipdir';
 
 const MAX_ARCHIVE = 512 * 1024 * 1024;   // 超过这个大小不做解析
 const MAX_INLINE_TEXT = 512 * 1024;      // 包内文本预览上限
@@ -37,12 +45,26 @@ function extOfName(name: string): string {
   return i < 0 ? '' : name.slice(i + 1).toLowerCase();
 }
 
+/** 清单模式下，说明某个文件为什么读不出内容。 */
+function lockReasonOf(e: ZipDirEntry): string {
+  if (e.encrypted) {
+    return e.method === 99
+      ? '该文件使用 AES 加密，需要密码才能解压'
+      : '该文件已加密，需要密码才能解压';
+  }
+  return `该文件使用 ${methodLabel(e.method)} 压缩，暂不支持直接预览`;
+}
+
 interface Entry {
   path: string;
   dir: boolean;
   size: number;
   compressed: number;
   date: Date | null;
+  /** 内容是否读不出来（加密 / 算法不支持）。清单仍可显示。 */
+  locked: boolean;
+  /** 读不出来的原因，用于点击时提示。清单模式下才有值。 */
+  lockReason: string;
 }
 
 export interface ZipViewOptions {
@@ -58,31 +80,73 @@ export async function renderZipView(
 
   // 动态加载 JSZip：它约 100KB，只有真正打开压缩包时才需要，
   // 静态 import 会把它塞进首屏包并拖慢页面 ready。
-  const JSZipMod: any = await import('jszip');
-  const JSZip = JSZipMod.default || JSZipMod;
-  const zip = await JSZip.loadAsync(ab);
+  //
+  // 关键：JSZip 遇到加密条目/不认识的算法是「整个包一起抛错」，
+  // 清单也列不出来。所以这里必须 try，失败后退化到直读中央目录。
+  let zip: any = null;
+  let zipErr = '';
+  try {
+    const JSZipMod: any = await import('jszip');
+    const JSZip = JSZipMod.default || JSZipMod;
+    zip = await JSZip.loadAsync(ab);
+  } catch (e: any) {
+    zipErr = e?.message || String(e);
+  }
   if (opts.stale()) return;
 
   const entries: Entry[] = [];
   let totalSize = 0;
   // 很多压缩工具不写"目录条目"（只有文件），目录数要按路径推导，否则一律显示 0
   const dirs = new Set<string>();
-  zip.forEach((path: string, f: any) => {
-    const meta: any = (f as any)._data || {};
-    if (f.dir) return;
-    const parts = path.split('/');
-    for (let i = 1; i < parts.length; i++) dirs.add(parts.slice(0, i).join('/'));
-    const size = Number(meta.uncompressedSize) || 0;
-    const compressed = Number(meta.compressedSize) || 0;
-    totalSize += size;
-    entries.push({
-      path,
-      dir: false,
-      size,
-      compressed,
-      date: meta.date instanceof Date ? meta.date : null
+
+  if (zip) {
+    // ---- 路径 1：JSZip 能读，内容也可预览 ----
+    zip.forEach((path: string, f: any) => {
+      const meta: any = (f as any)._data || {};
+      if (f.dir) return;
+      const parts = path.split('/');
+      for (let i = 1; i < parts.length; i++) dirs.add(parts.slice(0, i).join('/'));
+      const size = Number(meta.uncompressedSize) || 0;
+      const compressed = Number(meta.compressedSize) || 0;
+      totalSize += size;
+      entries.push({
+        path,
+        dir: false,
+        size,
+        compressed,
+        date: meta.date instanceof Date ? meta.date : null,
+        locked: false,
+        lockReason: ''
+      });
     });
-  });
+  } else {
+    // ---- 路径 2：JSZip 读不了，直读中央目录，至少把清单列出来 ----
+    const dir = readZipDirectory(ab);   // 再失败就让它抛出去，由上层显示
+    for (const e of dir.entries) {
+      if (e.dir) {
+        dirs.add(e.path);
+        continue;
+      }
+      const parts = e.path.split('/');
+      for (let i = 1; i < parts.length; i++) dirs.add(parts.slice(0, i).join('/'));
+      totalSize += e.size;
+      // 加密优先于算法：99（AES）本身就意味着加密
+      const locked = e.encrypted || !methodReadable(e.method);
+      entries.push({
+        path: e.path,
+        dir: false,
+        size: e.size,
+        compressed: e.compressed,
+        date: e.date,
+        locked,
+        lockReason: locked ? lockReasonOf(e) : ''
+      });
+    }
+    postToHost({
+      type: 'log',
+      message: `ZIP 无法用 JSZip 解析（${zipErr}），已改为直读中央目录列出清单：${name}（${entries.length} 个文件）`
+    });
+  }
   const dirCount = dirs.size;
   entries.sort((a, b) => a.path.localeCompare(b.path, 'zh-CN'));
   if (opts.stale()) return;
@@ -109,6 +173,18 @@ export async function renderZipView(
   search.placeholder = '筛选文件名…';
   head.appendChild(search);
   view.appendChild(head);
+
+  // 清单模式提示：告诉用户为什么只能看名字、读不了内容
+  const lockedCount = entries.reduce((n, e) => n + (e.locked ? 1 : 0), 0);
+  if (lockedCount > 0) {
+    const allEncrypted = lockedCount === entries.length
+      && entries.every((e) => e.lockReason.indexOf('加密') >= 0);
+    const notice = el('div', 'zip-notice');
+    notice.textContent = allEncrypted
+      ? `🔒 该压缩包已加密，需要密码才能解压 —— 以下仅列出文件清单（${entries.length} 个文件）`
+      : `🔒 包内 ${lockedCount} 个文件无法解压预览 —— 以下仍列出完整清单`;
+    view.appendChild(notice);
+  }
 
   // ---------- 文件列表 ----------
   const listBox = el('div', 'zip-list');
@@ -158,7 +234,10 @@ export async function renderZipView(
       tr.className = 'zip-row';
       const tdName = document.createElement('td');
       const icon = extOfName(e.path);
-      tdName.textContent = (TEXT_EXT.has(icon) || IMAGE_EXT.has(icon) ? '📄 ' : '📦 ') + e.path;
+      const mark = e.locked
+        ? '🔒 '
+        : (TEXT_EXT.has(icon) || IMAGE_EXT.has(icon) ? '📄 ' : '📦 ');
+      tdName.textContent = mark + e.path;
       tdName.title = e.path;
       const tdSize = document.createElement('td');
       tdSize.className = 'num';
@@ -190,10 +269,25 @@ export async function renderZipView(
     panel.style.display = 'block';
     panel.innerHTML = '';
     const ext = extOfName(e.path);
-    const head2 = el('div', 'zip-pv-head');
-    head2.appendChild(el('span', '', e.path));
-    head2.appendChild(el('span', 'zip-pv-size', humanSize(e.size)));
-    panel.appendChild(head2);
+
+    const mkHead = (): void => {
+      const h = el('div', 'zip-pv-head');
+      h.appendChild(el('span', '', e.path));
+      h.appendChild(el('span', 'zip-pv-size', humanSize(e.size)));
+      panel.appendChild(h);
+    };
+
+    // 清单模式：内容读不出来，直接说明原因，不要还显示"解压中…"吊着
+    if (e.locked) {
+      mkHead();
+      const lb = el('div', 'zip-pv-body');
+      lb.appendChild(el('div', 'zip-pv-tip', '🔒 ' + e.lockReason));
+      lb.appendChild(el('div', 'zip-pv-tip', '请用压缩软件输入密码解压后再打开。'));
+      panel.appendChild(lb);
+      return;
+    }
+
+    mkHead();
 
     const box = el('div', 'zip-pv-body');
     panel.appendChild(box);

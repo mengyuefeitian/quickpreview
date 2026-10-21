@@ -343,6 +343,17 @@ body.overlay .preview-placeholder { display: none; }
   line-height: 1.55; white-space: pre-wrap; word-break: break-word; color: #d8d8d8;
 }
 .zip-pv-tip { color: #9a9a9e; font-size: 12.5px; padding: 8px 0; }
+/* 清单模式：说明为什么只能看名字读不了内容 */
+.zip-notice {
+  padding: 10px 20px; font-size: 12.5px; line-height: 1.6;
+  background: #33291a; color: #e3c184; border-bottom: 1px solid #45381f;
+}
+
+/* 预览失败：此前这个类没有样式，失败时只显示一行裸文本 */
+.pv-error {
+  padding: 22px 20px; font-size: 13.5px; line-height: 1.75;
+  color: #e2a9a9; background: #251b1b;
+}
 
 /* ---------- 底部缩放控件（PDF / Word 共用） ---------- */
 .zoom-ctl {

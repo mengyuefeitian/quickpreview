@@ -444,8 +444,9 @@ namespace QuickPreview
         {
             try
             {
-                keybd_event(VK_SPACE_B, 0, 0, UIntPtr.Zero);
-                keybd_event(VK_SPACE_B, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+                // 带上自补发标记：钩子见到它直接放行，否则补发的空格会被自己再吞一次
+                keybd_event(VK_SPACE_B, 0, 0, KeyboardHook.RepostTag());
+                keybd_event(VK_SPACE_B, 0, KEYEVENTF_KEYUP, KeyboardHook.RepostTag());
             }
             catch (Exception ex)
             {

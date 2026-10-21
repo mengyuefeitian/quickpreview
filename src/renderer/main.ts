@@ -1,6 +1,6 @@
 import './styles/style.css';
 import { renderPreview, cancelRender, currentPager, setPagerBoundaryHandler } from './lib/preview';
-import { formatBytes } from './lib/util';
+import { formatBytes, el } from './lib/util';
 import { isWebView2, postToHost, onHostMessage } from './lib/host';
 import { extOf, categoryOfPath } from '../shared/mime';
 import type { FileItem, Category } from '../shared/types';
@@ -235,13 +235,24 @@ if (serviceMode) {
 // ---------- 预览控制 ----------
 function renderCurrent(): void {
   if (sel < 0 || sel >= list.length) return;
-  try {
-    hostLog(`渲染预览：${list[sel].path}（${list[sel].category}）`);
-    renderPreview(list[sel], body, bar);
-  } catch (err: any) {
-    hostError('渲染预览失败：' + (err?.stack || err?.message || String(err)));
-    body.innerHTML = `<div class="pv-error">预览渲染失败：${err?.message || err}</div>`;
-  }
+  const it = list[sel];
+  hostLog(`渲染预览：${it.path}（${it.category}）`);
+  // renderPreview 是 async：同步 try/catch 抓不到它内部的 reject。
+  // 必须显式接 .catch —— 否则解析失败（比如加密压缩包）会变成
+  // unhandled rejection，页面就永远停在"解析中…"，看上去像"不支持"。
+  renderPreview(it, body, bar).catch((err: any) => {
+    const msg = err?.message || String(err);
+    hostError(`渲染预览失败：${it.path}\n${err?.stack || msg}`);
+    body.innerHTML = '';
+    // 用 textContent 而不是 innerHTML：错误消息里含路径，不参与 HTML 解析
+    const box = el('div', 'pv-error');
+    box.textContent = '预览失败：' + msg;
+    body.appendChild(box);
+    bar.innerHTML = '';
+    const nm = el('span', 'pb-name');
+    nm.textContent = it.name || it.path;
+    bar.appendChild(nm);
+  });
   updateIndexHint();
   updateChrome();
 }
