@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -108,6 +109,25 @@ namespace QuickPreview
 
                         if (!isForeground) continue;
 
+                        // 同一个 hwnd 可能对应多个 ShellWindow（资源管理器多标签页、
+                        // 以及桌面那个 ShellWindow）。只看 hwnd 会把"桌面上次选中的视频"
+                        // 混进结果 —— 表现为「在桌面文件夹里预览任何文件，显示的都是那个视频」。
+                        // 这里加两道闸：窗口 class 必须与前台一致，选中项必须属于该窗口的目录。
+                        string wCls = ClassNameOf(new IntPtr(hwnd));
+                        if (!string.IsNullOrEmpty(wCls)
+                            && !string.Equals(wCls, fgClass, StringComparison.OrdinalIgnoreCase))
+                        {
+                            Log.D(LogKind.Hook, string.Format(
+                                "跳过窗口#{0}：hwnd 与前台相同但 class={1} ≠ 前台 {2}", index, wCls, fgClass));
+                            continue;
+                        }
+
+                        string locUrl = null;
+                        try { locUrl = Convert.ToString(w.LocationURL); } catch { }
+                        string locDir = FileUrlToDir(locUrl);
+                        if (!string.IsNullOrEmpty(locUrl))
+                            Log.D(LogKind.Hook, "前台窗口目录：" + locUrl + " → " + (locDir ?? "非文件系统"));
+
                         var doc = w.Document;
                         if (doc == null)
                         {
@@ -121,7 +141,17 @@ namespace QuickPreview
                             foreach (var it in items)
                             {
                                 string p = it.Path;
-                                if (!string.IsNullOrEmpty(p)) result.Add(p);
+                                if (string.IsNullOrEmpty(p)) continue;
+
+                                // 选中项必须落在该窗口显示的目录里。
+                                // 桌面 ShellWindow 与"桌面文件夹窗口"的 Location 常常都是「桌面」，
+                                // 光靠 LocationName 分不开，用真实父目录比对才可靠。
+                                if (locDir != null && !SameDir(Path.GetDirectoryName(p), locDir))
+                                {
+                                    Log.D(LogKind.Hook, "跳过不属于当前窗口目录的选中项：" + p);
+                                    continue;
+                                }
+                                result.Add(p);
                             }
                             Log.I(LogKind.Hook, "读取到选中项 " + result.Count + " 个：" + Join(result, 6));
                         }
@@ -162,6 +192,27 @@ namespace QuickPreview
         private static string SafeLocation(dynamic w)
         {
             try { return Convert.ToString(w.LocationName); } catch { return "?"; }
+        }
+
+        /// <summary>file:/// 形式的 LocationURL → 本地目录；库 / 搜索结果这类虚拟位置返回 null。</summary>
+        private static string FileUrlToDir(string url)
+        {
+            if (string.IsNullOrEmpty(url)) return null;
+            if (!url.StartsWith("file:", StringComparison.OrdinalIgnoreCase)) return null;
+            try
+            {
+                var u = new Uri(url);
+                return string.IsNullOrEmpty(u.LocalPath) ? null : u.LocalPath.TrimEnd('\\', '/');
+            }
+            catch { return null; }
+        }
+
+        /// <summary>目录比较：忽略大小写与末尾分隔符。任一为空则视为匹配（不误杀）。</summary>
+        private static bool SameDir(string a, string b)
+        {
+            if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b)) return true;
+            return string.Equals(a.TrimEnd('\\', '/'), b.TrimEnd('\\', '/'),
+                                 StringComparison.OrdinalIgnoreCase);
         }
 
         private static string Join(List<string> list, int max)

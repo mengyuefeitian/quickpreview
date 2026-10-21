@@ -1,6 +1,6 @@
 {
   "name": "quickpreview",
-  "version": "1.5.3",
+  "version": "1.6.0",
   "description": "Windows 空格键快速预览工具（类 macOS Quick Look）",
   "main": "dist/main/main.js",
   "author": "andyann",

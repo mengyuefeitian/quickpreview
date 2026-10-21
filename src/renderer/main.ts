@@ -2,7 +2,7 @@ import './styles/style.css';
 import { renderPreview, cancelRender, currentPager, setPagerBoundaryHandler } from './lib/preview';
 import { formatBytes } from './lib/util';
 import { isWebView2, postToHost, onHostMessage } from './lib/host';
-import { extOf, categoryOf } from '../shared/mime';
+import { extOf, categoryOfPath } from '../shared/mime';
 import type { FileItem, Category } from '../shared/types';
 
 const $ = (id: string) => document.getElementById(id)!;
@@ -265,6 +265,13 @@ function openPreview(): void {
 function closePreview(): void {
   open = false;
   pane.dataset.open = 'false';
+  // 大视频先把 src 摘掉再清空节点：直接 innerHTML='' 只是把元素从树上摘下来，
+  // 未播完的分片请求可能仍在后台继续，密密麻麻的 Range 请求叠在关闭瞬间。
+  // 显式 pause + removeAttribute('src') + load() 会让浏览器立即中止取流。
+  body.querySelectorAll('video, audio').forEach((node) => {
+    const m = node as HTMLMediaElement;
+    try { m.pause(); m.removeAttribute('src'); m.load(); } catch { /* 忽略释放异常 */ }
+  });
   // 丢弃仍在跑的渲染任务（PDF 逐页渲染不会自己停），并清空内容，
   // 避免下一次打开时先闪一下上一个文件的内容。
   cancelRender();
@@ -299,7 +306,7 @@ function moveSel(d: number): void {
 function itemFromPath(p: string): FileItem {
   const ext = extOf(p);
   const name = p.split(/[\\/]/).pop() || p;
-  return { path: p, name, ext, category: categoryOf(ext), size: 0 };
+  return { path: p, name, ext, category: categoryOfPath(p), size: 0 };
 }
 
 onHostMessage((msg: any) => {
@@ -323,7 +330,7 @@ onHostMessage((msg: any) => {
             path: p,
             name: String(it.name || p.split(/[\\/]/).pop() || p),
             ext: extOf(p),
-            category: it.dir ? ('folder' as Category) : categoryOf(extOf(p)),
+            category: it.dir ? ('folder' as Category) : categoryOfPath(p),
             size: Number(it.size) || 0,
             isDir: !!it.dir
           } as FileItem;
@@ -357,8 +364,14 @@ onHostMessage((msg: any) => {
 postToHost({ type: 'ready' });
 hostLog('预览引擎已就绪（已注册宿主消息监听）');
 
-// 分页器（PDF）翻到首页/末页后继续翻 → 切换到相邻文件
-setPagerBoundaryHandler((dir: number) => move(dir > 0 ? 1 : -1));
+// 分页器翻到首页/末页后**不再切换文件**。
+//
+// 曾经这里挂的是 `dir => move(dir)`，后果是：滚轮翻到最后一页后继续滚，
+// 会直接跳到同目录的另一个文件（用户感觉是"随机跳"），而且往回滚也回不到原文件——
+// 因为当前文件已经被换掉了，分页器也重置了。
+// 现在滚轮与 PageUp/PageDown 只在文档内部翻页，翻到头就停住；
+// 切换文件只由方向键触发（↑↓ 在任何视图都切文件，←→ 在翻到边界后切，对应平铺/网格布局）。
+setPagerBoundaryHandler(null);
 
 // ---------- 键盘 ----------
 // 多页文档（PDF）里左右键先翻页，翻到首页/末页再翻才切换到上一个/下一个文件；
@@ -382,10 +395,11 @@ window.addEventListener('keydown', (e) => {
       if (!(pager && pager.prev())) move(-1);
       break;
     case 'PageDown':
-      if (pager) { e.preventDefault(); if (!pager.next()) move(1); }
+      // 只翻页，翻到底就停住，不切文件（切文件是方向键的职责）
+      if (pager) { e.preventDefault(); pager.next(); }
       break;
     case 'PageUp':
-      if (pager) { e.preventDefault(); if (!pager.prev()) move(-1); }
+      if (pager) { e.preventDefault(); pager.prev(); }
       break;
     case 'Home':
       if (pager) { e.preventDefault(); pager.goto(1); }

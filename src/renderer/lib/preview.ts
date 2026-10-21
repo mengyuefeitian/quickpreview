@@ -152,7 +152,14 @@ async function renderCore(item: FileItem, body: Body, bar: Bar, my: number): Pro
       img.className = 'img-content';
       img.src = url;
       await new Promise<void>((resolve, reject) => {
-        img.onload = () => { body.innerHTML = ''; body.appendChild(img); resolve(); };
+        img.onload = () => {
+          body.innerHTML = '';
+          body.appendChild(img);
+          // 底部标注真实像素尺寸与文件大小（缩放显示时看不出原图多大）
+          const bytes = item.size || ab.byteLength;
+          setBar(bar, item, `${img.naturalWidth} × ${img.naturalHeight} px · ${humanSize(bytes)}`);
+          resolve();
+        };
         img.onerror = () => { showError(body, '图片加载失败'); reject(new Error('图片加载失败')); };
       });
       return;
@@ -221,21 +228,68 @@ async function renderCore(item: FileItem, body: Body, bar: Bar, my: number): Pro
       }
       body.innerHTML = '';
       const wrap = el('div', 'media-wrap');
-      if (item.category === 'audio') {
-        const a = document.createElement('audio');
-        a.controls = true;
-        a.src = r.url;
-        wrap.appendChild(a);
-        wrap.insertBefore(el('div', 'media-poster', '🎵'), a);
+      const isAudio = item.category === 'audio';
+
+      // 自动播放：音视频打开即播。WebView2 默认是有声自动播放需要用户手势，
+      // 宿主侧启动参数已加 --autoplay-policy=no-user-gesture-required 解除该限制。
+      const media = isAudio ? document.createElement('audio') : document.createElement('video');
+      media.controls = true;
+      media.autoplay = true;
+      media.preload = 'auto';
+      media.src = r.url;
+
+      if (isAudio) {
+        wrap.insertBefore(el('div', 'media-poster', '🎵'), null);
       } else {
-        const v = document.createElement('video');
-        v.controls = true;
-        v.src = r.url;
-        v.style.maxHeight = '82%';
-        wrap.appendChild(v);
+        (media as HTMLVideoElement).style.maxHeight = '82%';
       }
+      wrap.appendChild(media);
       body.appendChild(wrap);
       setBar(bar, item, r.mime || '');
+
+      // 元数据（分辨率 / 时长 / MIME / 大小）加载完后补到右下角
+      let described = false;
+      const describe = () => {
+        if (described) return;
+        described = true;
+        const parts: string[] = [];
+        if (!isAudio) {
+          const v = media as HTMLVideoElement;
+          if (v.videoWidth && v.videoHeight) parts.push(`${v.videoWidth} × ${v.videoHeight}`);
+        }
+        if (isFinite(media.duration) && media.duration > 0) parts.push(fmtDuration(media.duration));
+        if (r.mime) parts.push(r.mime);
+        if (item.size) parts.push(humanSize(item.size));
+        if (parts.length) setBar(bar, item, parts.join(' · '));
+      };
+      media.addEventListener('loadedmetadata', describe);
+      // 元数据拿不到时（个别容器），至少把 MIME 和大小显示出来
+      media.addEventListener('error', () => {
+        if (stale(my)) return;
+        describe();
+        if (media.error && media.error.code >= 3) {
+          showError(body, '媒体解码失败：' + (media.error.message || '编码不受支持'));
+        }
+      });
+
+      // 自动播放可能被浏览器策略拒绝（有声播放需要用户手势）。
+      // 视频退一步用静音再试一次 —— Chromium 对静音自动播放总是放行，至少画面能动；
+      // 音频不静音重试（静音等于没播），只记日志等用户点播放。
+      const played = media.play();
+      if (played && typeof played.catch === 'function') {
+        played.catch((err: any) => {
+          postToHost({
+            type: 'log',
+            message: `自动播放被拒绝：${item.name}（${err?.name || err}）`
+          });
+          if (isAudio) return;
+          try {
+            media.muted = true;
+            const retry = media.play();
+            if (retry && typeof retry.catch === 'function') retry.catch(() => { /* 静音也不行就等用户点 */ });
+          } catch { /* 忽略 */ }
+        });
+      }
       return;
     }
 
@@ -248,6 +302,16 @@ function humanSize(n: number): string {
   if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
   if (n < 1024 * 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + ' MB';
   return (n / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+}
+
+/** 秒 → 1:23 / 1:02:03 */
+function fmtDuration(sec: number): string {
+  const total = Math.max(0, Math.round(sec));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 }
 
 /**

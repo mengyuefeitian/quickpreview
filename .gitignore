@@ -20,6 +20,7 @@ logs/
 # 测试样本：大文件由 make_samples.py 生成，不入库
 test-samples/big_book.txt
 test-samples/big.pdf
+test-samples/big_test.wav
 test-samples/_regress*.txt
 test-samples/e2e_result.txt
 test-samples/__pycache__/

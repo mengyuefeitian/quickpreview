@@ -94,6 +94,7 @@ namespace QuickPreview
         private string _startupFile;                  // --preview 排查入口指定的文件
         private bool _previewActive;                  // 预览窗口当前是否处于激活（在前台）状态
         private string _currentPath;                  // 当前正在预览的文件（用于判断是切换还是重复预览）
+        private bool _elevationWarned;                // 「读不到选中项 + 管理员级别」只提示一次，不反复打扰
         private readonly System.Windows.Forms.Timer _raiseTimer
             = new System.Windows.Forms.Timer { Interval = 300 };   // 置顶补偿定时器
 
@@ -175,18 +176,15 @@ namespace QuickPreview
             InitHook();
             InitHeartbeat();
 
-            // 以管理员运行时读取资源管理器选中项必然失败，直接给出可见提示，避免"按空格没反应"无从排查
+            // 注意：这里**只在日志里记一笔，不弹气泡**。
+            // 早期版本启动即弹「当前以管理员权限运行，无法读取选中文件」，但这是误报：
+            // 机器上关掉 UAC 时（企业镜像、个人手动关掉都很常见），双击启动拿到的就是
+            // 完全管理员令牌，而此时资源管理器同样是管理员级别 —— 两边同级别，
+            // COM 调用完全正常，用户实测能正常预览，却被无端吓了一跳。
+            // 真正的判据不是「自己是不是管理员」，而是「读选中项是否真的失败」，
+            // 所以提示改到读取失败的分支里（见 TriggerPreviewFromExplorer）。
             if (Program.IsElevated)
-            {
-                Log.E(LogKind.App, "启动即检测到管理员权限，已弹出提示");
-                try
-                {
-                    _tray.ShowBalloonTip(12000, "QuickPreview 权限提示",
-                        "当前以管理员权限运行，无法读取资源管理器的选中文件（按空格会没反应）。"
-                        + "请退出后在普通权限下重新启动本程序。", ToolTipIcon.Warning);
-                }
-                catch { }
-            }
+                Log.W(LogKind.App, "当前进程处于管理员完整性级别；若读取选中项失败，会提示切回普通权限");
         }
 
         // ---------- 图标 ----------
@@ -485,10 +483,28 @@ namespace QuickPreview
                     string cls = ExplorerSelection.ClassNameOf(fg);
                     Log.W(LogKind.Hook, "未读取到任何选中项，放弃预览（前台窗口 class=" + cls + "）");
 
-                    // 常见原因提示，便于自查
-                    if (cls == "CabinetWClass" || cls == "ExploreWClass")
-                        Log.W(LogKind.Hook, "已确认焦点在资源管理器但仍读不到选中项："
-                            + "通常是权限级别不一致（本程序以管理员运行，资源管理器为普通权限）");
+                    // 只有「焦点确实在资源管理器、却读不到选中项」时才可能是权限问题。
+                    // 注意判据：不是"我是管理员就一定是权限问题"（UAC 关闭时两边都是管理员，
+                    // 完全正常），而是"读不到 + 我处于高完整性级别"才提示，且只提示一次。
+                    bool explorerFg = cls == "CabinetWClass" || cls == "ExploreWClass";
+                    if (explorerFg && Program.IsElevated && !_elevationWarned)
+                    {
+                        _elevationWarned = true;
+                        Log.W(LogKind.Hook, "焦点在资源管理器但读不到选中项，且本程序处于管理员级别："
+                            + "很可能是与资源管理器完整性级别不一致");
+                        try
+                        {
+                            _tray.ShowBalloonTip(10000, "QuickPreview 读取不到选中文件",
+                                "当前程序以管理员权限运行，与普通权限的资源管理器不在同一级别，"
+                                + "无法读取选中项。可从托盘菜单选「以普通权限重启」。", ToolTipIcon.Warning);
+                        }
+                        catch { }
+                    }
+                    else if (explorerFg)
+                    {
+                        Log.W(LogKind.Hook, "已确认焦点在资源管理器但仍读不到选中项，"
+                            + "请检查该窗口里是否真的选中了文件（或选中项位于另一个标签页）");
+                    }
                     return TriggerResult.NoSelection;
                 }
 
@@ -829,6 +845,11 @@ namespace QuickPreview
                     Directory.CreateDirectory(udf);
                     var cp = new CoreWebView2CreationProperties { UserDataFolder = udf };
 
+                    // 音视频"打开即播"：Chromium 默认要求用户手势才允许有声自动播放，
+                    // 否则 play() 被静默拒绝（表现为点了没反应、要手动点播放键）。
+                    // 这里放开策略 —— 预览窗口本来就是用户按空格主动打开的。
+                    string browserArgs = "--autoplay-policy=no-user-gesture-required";
+
                     // 开发/自动化测试钩子：给 WebView2 加 --remote-debugging-port，
                     // 这样 test-samples 里的脚本可以直接驱动页面（点按钮、量尺寸、截图），
                     // 不必依赖鼠标模拟（本机安全策略禁止 PowerShell COM 操作窗口）。
@@ -836,11 +857,12 @@ namespace QuickPreview
                     var cdpPort = Environment.GetEnvironmentVariable("QP_DEV_CDP_PORT");
                     if (!string.IsNullOrWhiteSpace(cdpPort))
                     {
-                        cp.AdditionalBrowserArguments = "--remote-debugging-port=" + cdpPort.Trim();
+                        browserArgs += " --remote-debugging-port=" + cdpPort.Trim();
                         Log.W(LogKind.Web, "【开发模式】已开启远程调试端口 " + cdpPort.Trim()
                             + "（仅 QP_DEV_CDP_PORT 环境变量存在时生效）");
                     }
 
+                    cp.AdditionalBrowserArguments = browserArgs;
                     _web.CreationProperties = cp;
                     Log.I(LogKind.Web, "WebView2 用户数据目录：" + udf);
                 }
@@ -869,6 +891,22 @@ namespace QuickPreview
 
                 // JS → C#
                 _core.WebMessageReceived += OnWebMessageReceived;
+
+                // 渲染进程崩溃/无响应：以前完全没有监听，出问题时只表现为
+                // 「预览窗口白屏、页面像卡死」，日志里一个字都没有。
+                _core.ProcessFailed += (s2, e2) =>
+                {
+                    // GPU / 解码这类子进程崩了 Chromium 会自动重启，且无显卡的机器（远程桌面、
+                    // 虚拟机）上必然反复崩，记成 ERROR 会把问题日志彻底淹没 —— 只有浏览器主进程
+                    // 或渲染进程退出才是真的"预览没了"，那才用 ERROR。
+                    bool fatal = e2.ProcessFailedKind == CoreWebView2ProcessFailedKind.BrowserProcessExited
+                              || e2.ProcessFailedKind == CoreWebView2ProcessFailedKind.RenderProcessExited;
+                    string info = "Web 子进程异常：" + e2.ProcessFailedKind
+                        + "（reason=" + e2.Reason + "，exitCode=" + e2.ExitCode + "）"
+                        + (fatal ? " —— 本次预览已中断" : "（非致命，Chromium 会自动重启该进程）");
+                    if (fatal) Log.E(LogKind.Web, info);
+                    else Log.W(LogKind.Web, info);
+                };
                 _web.CoreWebView2InitializationCompleted += (s, e) =>
                 {
                     if (!e.IsSuccess) Log.E(LogKind.Web, "WebView2 初始化失败：" + e.InitializationException);
@@ -928,23 +966,28 @@ namespace QuickPreview
                 if (string.IsNullOrEmpty(p) || !File.Exists(p))
                 {
                     Log.W(LogKind.Media, "404 本地文件不存在：" + p);
-                    Respond(e, 404, "Not Found", null, "Content-Type: text/plain");
+                    Respond(e, 404, "Not Found", (byte[])null, "Content-Type: text/plain");
                     return;
                 }
                 if (!_allowed.Contains(p))
                 {
                     Log.W(LogKind.Media, "403 不在允许列表：" + p);
-                    Respond(e, 403, "Forbidden", null, "Content-Type: text/plain");
+                    Respond(e, 403, "Forbidden", (byte[])null, "Content-Type: text/plain");
                     return;
                 }
 
-                var bytes = File.ReadAllBytes(p);
+                // 关键：绝不 ReadAllBytes。
+                // 以前这里一次性把整个文件读进内存，预览大视频时播放器会连发多个 Range 请求，
+                // 每个请求全量读 + 复制一份 chunk，内存瞬间翻几倍，进程直接 OOM 退出
+                // （用户看到的就是「加载大视频后点关闭就崩溃」）。现在只按区间流式读取。
+                long total = new FileInfo(p).Length;
                 string mime = FileTypes.MimeOf(p);
 
                 string range = null;
                 try { range = e.Request.Headers.GetHeader("Range"); } catch { }
 
-                int start = 0, end = bytes.Length - 1;
+                long start = 0;
+                long end = total - 1;
                 int status = 200;
                 string reason = "OK";
                 string contentRange = null;
@@ -952,23 +995,52 @@ namespace QuickPreview
                 if (!string.IsNullOrEmpty(range) && range.StartsWith("bytes="))
                 {
                     string spec = range.Substring(6);
+                    // 多区间（逗号分隔）极少见，只取第一段
+                    int comma = spec.IndexOf(',');
+                    if (comma >= 0) spec = spec.Substring(0, comma);
+
                     var parts = spec.Split('-');
-                    int.TryParse(parts[0], out start);
-                    if (parts.Length > 1 && parts[1].Length > 0) int.TryParse(parts[1], out end);
-                    else end = bytes.Length - 1;
+                    string a = parts.Length > 0 ? parts[0].Trim() : string.Empty;
+                    string b = parts.Length > 1 ? parts[1].Trim() : string.Empty;
 
-                    if (start < 0) start = 0;
-                    if (end >= bytes.Length) end = bytes.Length - 1;
-                    if (start > end) start = end;
+                    long parsed;
+                    if (a.Length == 0)
+                    {
+                        // bytes=-N → 最后 N 字节
+                        long suffix;
+                        if (long.TryParse(b, out suffix) && suffix > 0)
+                            start = Math.Max(0, total - suffix);
+                        end = total - 1;
+                    }
+                    else
+                    {
+                        if (long.TryParse(a, out parsed)) start = parsed;
+                        if (b.Length > 0)
+                        {
+                            if (long.TryParse(b, out parsed)) end = parsed;
+                        }
+                        else end = total - 1;
+                    }
 
-                    int len = end - start + 1;
-                    var chunk = new byte[len];
-                    Array.Copy(bytes, start, chunk, 0, len);
-                    bytes = chunk;
+                    if (total <= 0)
+                    {
+                        start = 0; end = 0;
+                    }
+                    else
+                    {
+                        if (start < 0) start = 0;
+                        if (end >= total) end = total - 1;
+                        if (start >= total) start = total - 1;
+                        if (end < start) end = start;
+                    }
 
                     status = 206;
                     reason = "Partial Content";
-                    contentRange = $"bytes {start}-{end}/{new FileInfo(p).Length}";
+                    contentRange = $"bytes {start}-{end}/{total}";
+                }
+                else if (total <= 0)
+                {
+                    end = -1;
                 }
 
                 var headers = new StringBuilder();
@@ -978,24 +1050,42 @@ namespace QuickPreview
                 if (contentRange != null)
                     headers.Append($"Content-Range: {contentRange}").Append("\r\n");
 
-                Log.D(LogKind.Media, string.Format("__local {0} → {1} {2}，{3:N0} 字节，mime={4}",
-                    status, Path.GetFileName(p), reason, bytes.LongLength, mime));
+                long len = Math.Max(0, end - start + 1);
+                Log.D(LogKind.Media, string.Format("__local {0} {1}：{2}，{3:N0} 字节（{4:N0}–{5:N0} / 共 {6:N0}），mime={7}",
+                    status, Path.GetFileName(p), reason, len, start, end, total, mime));
 
-                Respond(e, status, reason, bytes, headers.ToString());
+                FileStream fs = null;
+                try
+                {
+                    fs = new FileStream(p, FileMode.Open, FileAccess.Read,
+                        FileShare.ReadWrite | FileShare.Delete, 64 * 1024, FileOptions.SequentialScan);
+                    if (start > 0) fs.Seek(start, SeekOrigin.Begin);
+                    Respond(e, status, reason, new ByteRangeStream(fs, len), headers.ToString());
+                    fs = null;   // 所有权已交给响应流，由它在读完/释放时关闭
+                }
+                finally
+                {
+                    if (fs != null) { try { fs.Dispose(); } catch { } }
+                }
             }
             catch (Exception ex)
             {
                 Log.E(LogKind.Media, "处理 __local 请求异常", ex);
-                try { Respond(e, 500, "Internal Error", null, "Content-Type: text/plain"); } catch { }
+                try { Respond(e, 500, "Internal Error", (byte[])null, "Content-Type: text/plain"); } catch { }
             }
         }
 
         private void Respond(CoreWebView2WebResourceRequestedEventArgs e, int status, string reason,
             byte[] body, string headers)
         {
-            var stream = new MemoryStream(body ?? new byte[0]);
+            Respond(e, status, reason, new MemoryStream(body ?? new byte[0]), headers);
+        }
+
+        private void Respond(CoreWebView2WebResourceRequestedEventArgs e, int status, string reason,
+            Stream body, string headers)
+        {
             e.Response = _core.Environment.CreateWebResourceResponse(
-                stream, status, reason, (headers ?? string.Empty) + "\r\n");
+                body, status, reason, (headers ?? string.Empty) + "\r\n");
         }
 
         private static string QueryParam(Uri uri, string key)

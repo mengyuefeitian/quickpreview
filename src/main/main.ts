@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, protocol, shell } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
-import { extOf, categoryOf, isPreviewable, getMime } from './mime';
+import { extOf, categoryOfPath, isPreviewablePath, getMime } from './mime';
 import { addAllowed, addAllowedMany, isAllowed, localUrl } from './allowed';
 import { prepareMedia } from './transcode';
 import type { FileItem } from '../shared/types';
@@ -98,10 +98,10 @@ function walkDir(dir: string, out: FileItem[]): void {
       walkDir(full, out);
     } else if (e.isFile()) {
       const ext = extOf(e.name);
-      if (isPreviewable(ext)) {
+      if (isPreviewablePath(full)) {
         let size = 0;
         try { size = fs.statSync(full).size; } catch { /* ignore */ }
-        out.push({ path: full, name: e.name, ext, category: categoryOf(ext), size });
+        out.push({ path: full, name: e.name, ext, category: categoryOfPath(full), size });
       }
     }
   }
@@ -124,12 +124,12 @@ function registerIpc(): void {
     });
     if (r.canceled || r.filePaths.length === 0) return [];
     const list: FileItem[] = r.filePaths
-      .filter((p) => isPreviewable(extOf(p)))
+      .filter((p) => isPreviewablePath(p))
       .map((p) => {
         const ext = extOf(p);
         let size = 0;
         try { size = fs.statSync(p).size; } catch { /* ignore */ }
-        return { path: p, name: path.basename(p), ext, category: categoryOf(ext), size };
+        return { path: p, name: path.basename(p), ext, category: categoryOfPath(p), size };
       });
     addAllowedMany(list.map((f) => f.path));
     return list;
@@ -146,12 +146,12 @@ function registerIpc(): void {
 
   ipcMain.handle('files:setList', (_e, paths: string[]) => {
     const list: FileItem[] = paths
-      .filter((p) => isPreviewable(extOf(p)))
+      .filter((p) => isPreviewablePath(p))
       .map((p) => {
         const ext = extOf(p);
         let size = 0;
         try { size = fs.statSync(p).size; } catch { /* ignore */ }
-        return { path: p, name: path.basename(p), ext, category: categoryOf(ext), size };
+        return { path: p, name: path.basename(p), ext, category: categoryOfPath(p), size };
       });
     addAllowedMany(list.map((f) => f.path));
     return list;
