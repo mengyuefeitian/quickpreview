@@ -10,6 +10,7 @@ QuickPreview 真实端到端测试（资源管理器选中文件 → 按空格 �
 """
 import os, sys, time, subprocess, ctypes
 from ctypes import wintypes
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 u32 = ctypes.WinDLL("user32", use_last_error=True)
 u32.GetForegroundWindow.restype = wintypes.HWND
@@ -22,9 +23,9 @@ VK_SPACE = 0x20
 CANDIDATE = {"CabinetWClass", "ExploreWClass", "Progman", "WorkerW",
              "SHELLDLL_DefView", "#32770"}
 
-SAMPLES = r"D:\softDevelop\预览\quick-preview\test-samples"
-LOGDIR = r"C:\Users\anweining01\AppData\Local\QuickPreview\logs"
-APP = r"C:\Users\anweining01\AppData\Local\Programs\QuickPreview\QuickPreview.exe"
+SAMPLES = os.path.join(ROOT, "test-samples")
+LOGDIR = os.path.expanduser(r"~\AppData\Local\QuickPreview\logs")
+APP = os.path.expanduser(r"~\AppData\Local\Programs\QuickPreview\QuickPreview.exe")
 RESULT = os.path.join(SAMPLES, "e2e_result.txt")
 LOGS = ("app.log", "hook.log", "preview.log", "media.log", "web.log", "error.log")
 

@@ -156,17 +156,17 @@ Word 真实文档（带封面文本框、多节页眉页脚、带书签目录）
 
 ---
 
-[1.5.3]: https://github.com/mengyuefeitian/quick-preview/releases/tag/v1.5.3
-[1.5.2]: https://github.com/mengyuefeitian/quick-preview/releases/tag/v1.5.2
-[1.5.1]: https://github.com/mengyuefeitian/quick-preview/releases/tag/v1.5.1
-[1.5.0]: https://github.com/mengyuefeitian/quick-preview/releases/tag/v1.5.0
-[1.4.0]: https://github.com/mengyuefeitian/quick-preview/releases/tag/v1.4.0
-[1.3.0]: https://github.com/mengyuefeitian/quick-preview/releases/tag/v1.3.0
-[1.2.0]: https://github.com/mengyuefeitian/quick-preview/releases/tag/v1.2.0
-[1.1.5]: https://github.com/mengyuefeitian/quick-preview/releases/tag/v1.1.5
-[1.1.4]: https://github.com/mengyuefeitian/quick-preview/releases/tag/v1.1.4
-[1.1.3]: https://github.com/mengyuefeitian/quick-preview/releases/tag/v1.1.3
-[1.1.2]: https://github.com/mengyuefeitian/quick-preview/releases/tag/v1.1.2
-[1.1.1]: https://github.com/mengyuefeitian/quick-preview/releases/tag/v1.1.1
-[1.1.0]: https://github.com/mengyuefeitian/quick-preview/releases/tag/v1.1.0
-[1.0.0]: https://github.com/mengyuefeitian/quick-preview/releases/tag/v1.0.0
+[1.5.3]: https://github.com/mengyuefeitian/quickpreview/releases/tag/v1.5.3
+[1.5.2]: https://github.com/mengyuefeitian/quickpreview/releases/tag/v1.5.2
+[1.5.1]: https://github.com/mengyuefeitian/quickpreview/releases/tag/v1.5.1
+[1.5.0]: https://github.com/mengyuefeitian/quickpreview/releases/tag/v1.5.0
+[1.4.0]: https://github.com/mengyuefeitian/quickpreview/releases/tag/v1.4.0
+[1.3.0]: https://github.com/mengyuefeitian/quickpreview/releases/tag/v1.3.0
+[1.2.0]: https://github.com/mengyuefeitian/quickpreview/releases/tag/v1.2.0
+[1.1.5]: https://github.com/mengyuefeitian/quickpreview/releases/tag/v1.1.5
+[1.1.4]: https://github.com/mengyuefeitian/quickpreview/releases/tag/v1.1.4
+[1.1.3]: https://github.com/mengyuefeitian/quickpreview/releases/tag/v1.1.3
+[1.1.2]: https://github.com/mengyuefeitian/quickpreview/releases/tag/v1.1.2
+[1.1.1]: https://github.com/mengyuefeitian/quickpreview/releases/tag/v1.1.1
+[1.1.0]: https://github.com/mengyuefeitian/quickpreview/releases/tag/v1.1.0
+[1.0.0]: https://github.com/mengyuefeitian/quickpreview/releases/tag/v1.0.0

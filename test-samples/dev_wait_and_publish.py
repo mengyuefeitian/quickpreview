@@ -12,7 +12,7 @@ import time
 sys.path.insert(0, r"test-samples")
 import dev_gh as g  # noqa: E402
 
-REPO = "mengyuefeitian/quick-preview"
+REPO = "mengyuefeitian/quickpreview"
 PROBE = "/repos/%s/contents/__probe.txt" % REPO
 LIMIT = int(sys.argv[1]) if len(sys.argv) > 1 else 480
 

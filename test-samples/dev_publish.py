@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import dev_gh as g  # noqa: E402
 
 OWNER = "mengyuefeitian"
-REPO = "quick-preview"
+REPO = "quickpreview"
 FULL = f"{OWNER}/{REPO}"
 TAG = "v1.5.3"
 TITLE = "QuickPreview 1.5.3"

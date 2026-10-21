@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """生成 QuickPreview 全类型测试样本（纯标准库 + ffmpeg）"""
 import os, zlib, struct, zipfile, subprocess, sys
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 OUT = os.path.dirname(os.path.abspath(__file__))
-FFMPEG = r"D:\softDevelop\预览\quick-preview\publish\ffmpeg.exe"
+FFMPEG = os.path.join(ROOT, "publish/ffmpeg.exe")
 
 
 def png(path, w=640, h=400):

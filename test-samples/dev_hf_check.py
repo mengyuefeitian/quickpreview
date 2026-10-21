@@ -4,8 +4,8 @@ import os, sys, time, subprocess, json
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXE = os.path.join(ROOT, "publish", "QuickPreview.exe")
-NODE = r"C:\Users\anweining01\.workbuddy\binaries\node\versions\22.22.2-6\node.exe"
-PY = r"C:\Users\anweining01\.workbuddy\binaries\python\envs\default\Scripts\python.exe"
+NODE = os.path.expanduser(r"~\.workbuddy\binaries\node\versions\22.22.2-6\node.exe")
+PY = os.path.expanduser(r"~\.workbuddy\binaries\python\envs\default\Scripts\python.exe")
 PROBE = os.path.join(ROOT, "test-samples", "_hf_summary.js")
 EVAL = os.path.join(ROOT, "test-samples", "dev_eval.mjs")
 

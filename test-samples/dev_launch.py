@@ -2,8 +2,9 @@
 """临时脚本：以远程调试端口启动 QuickPreview（--preview 某个文件），不等待退出。"""
 import os, subprocess, sys, time
 
-EXE = r"D:\softDevelop\预览\quick-preview\publish\QuickPreview.exe"
-SAMPLES = r"D:\softDevelop\预览\quick-preview\test-samples"
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+EXE = os.path.join(ROOT, "publish", "QuickPreview.exe")
+SAMPLES = os.path.join(ROOT, "test-samples")
 
 target = sys.argv[1] if len(sys.argv) > 1 else os.path.join(SAMPLES, "multipage.docx")
 if not os.path.isabs(target):

@@ -13,7 +13,7 @@ import sys
 import json
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-NODE = r"C:\Users\anweining01\.workbuddy\binaries\node\versions\22.22.2-6\node.exe"
+NODE = os.path.expanduser(r"~\.workbuddy\binaries\node\versions\22.22.2-6\node.exe")
 # 注意：node_modules/.bin/esbuild 是 shell 脚本，Python 直接 exec 会报 WinError 193，
 # 必须经 node 跑 esbuild 的 JS 入口（它内部再拉起对应平台的原生二进制）
 ESBUILD_PKG = os.path.join(ROOT, "node_modules", "esbuild", "bin", "esbuild")

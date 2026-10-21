@@ -5,10 +5,11 @@ import re
 import sys
 import time
 import subprocess
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-EXE = os.environ.get("QP_EXE") or r"D:\softDevelop\预览\quick-preview\publish\QuickPreview.exe"
-LOGDIR = r"C:\Users\anweining01\AppData\Local\QuickPreview\logs"
-SAMPLES = r"D:\softDevelop\预览\quick-preview\test-samples"
+EXE = os.environ.get("QP_EXE") or os.path.join(ROOT, "publish/QuickPreview.exe")
+LOGDIR = os.path.expanduser(r"~\AppData\Local\QuickPreview\logs")
+SAMPLES = os.path.join(ROOT, "test-samples")
 LOGS = ("app.log", "preview.log", "media.log", "web.log", "error.log")
 
 

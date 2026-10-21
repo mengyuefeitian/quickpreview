@@ -10,6 +10,17 @@
 import ctypes, os, subprocess, sys, time
 from ctypes import wintypes
 
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def latest_installer():
+    """installer/ 下按修改时间取最新的安装包，避免脚本里写死版本号。"""
+    d = os.path.join(ROOT, "installer")
+    if not os.path.isdir(d):
+        return None
+    exes = [os.path.join(d, f) for f in os.listdir(d) if f.lower().endswith(".exe")]
+    return max(exes, key=os.path.getmtime) if exes else None
+
 APP = os.path.join(os.environ["LOCALAPPDATA"], "Programs", "QuickPreview")
 ASSETS = os.path.join(APP, "webroot", "assets")
 
@@ -54,7 +65,10 @@ def file_version(exe):
 
 
 def main():
-    setup = sys.argv[1] if len(sys.argv) > 1 else r"D:\softDevelop\预览\quick-preview\installer\QuickPreview-Setup-1.5.2-x64.exe"
+    setup = sys.argv[1] if len(sys.argv) > 1 else latest_installer()
+    if not setup:
+        print("找不到 installer/*.exe，请先构建安装包，或把路径作为第一个参数传入。")
+        return 1
     subprocess.run(["taskkill", "/F", "/IM", "QuickPreview.exe"], capture_output=True)
     time.sleep(1)
 
@@ -89,7 +103,7 @@ def main():
             print("   ", x)
     print("exe 版本：", file_version(os.path.join(APP, "QuickPreview.exe")))
     print("package.json 版本：", __import__("json").load(
-        open(r"D:\softDevelop\预览\quick-preview\package.json", encoding="utf-8"))["version"])
+        open(os.path.join(ROOT, "package.json"), encoding="utf-8"))["version"])
     print("exe 同级 WebView2 缓存（应为 False）：",
           os.path.isdir(os.path.join(APP, "QuickPreview.exe.WebView2")))
     return 0 if names else 1

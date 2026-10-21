@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """以普通权限（经 explorer.exe）启动已安装的 QuickPreview 服务。"""
+import os
 import ctypes, time, subprocess, sys
 
-APP = r"C:\Users\anweining01\AppData\Local\Programs\QuickPreview\QuickPreview.exe"
+APP = os.path.expanduser(r"~\AppData\Local\Programs\QuickPreview\QuickPreview.exe")
 
 
 def is_running():

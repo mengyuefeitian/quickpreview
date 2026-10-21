@@ -2,6 +2,7 @@
 """诊断：当前会话能否取得前台焦点（决定是否可做真实按键端到端测试）"""
 import ctypes, time, subprocess
 from ctypes import wintypes
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 u32 = ctypes.WinDLL('user32', use_last_error=True)
 k32 = ctypes.WinDLL('kernel32', use_last_error=True)
@@ -40,7 +41,7 @@ print('explorer windows:', [(int(h), ttl(h)[:40]) for h in wins])
 if not wins:
     print('打开文件夹…')
     ctypes.windll.shell32.ShellExecuteW(
-        None, 'open', r'D:\softDevelop\预览\quick-preview\test-samples', None, None, 1)
+        None, 'open', os.path.join(ROOT, "test-samples"), None, None, 1)
     time.sleep(5)
     wins = []
     u32.EnumWindows(cb, 0)

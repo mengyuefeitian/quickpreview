@@ -10,11 +10,12 @@
 """
 import ctypes, json, os, subprocess, sys, time
 from ctypes import wintypes
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-EXE = r"D:\softDevelop\预览\quick-preview\publish\QuickPreview.exe"
-SAMPLES = r"D:\softDevelop\预览\quick-preview\test-samples"
+EXE = os.path.join(ROOT, "publish/QuickPreview.exe")
+SAMPLES = os.path.join(ROOT, "test-samples")
 CONFIG = os.path.join(os.environ["LOCALAPPDATA"], "QuickPreview", "config.json")
-NODE = r"C:\Users\anweining01\.workbuddy\binaries\node\versions\22.22.2-6\node.exe"
+NODE = os.path.expanduser(r"~\.workbuddy\binaries\node\versions\22.22.2-6\node.exe")
 CDP = os.path.join(SAMPLES, "dev_cdp.mjs")
 
 u32 = ctypes.WinDLL("user32", use_last_error=True)

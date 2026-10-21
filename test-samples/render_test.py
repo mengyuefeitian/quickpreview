@@ -5,10 +5,11 @@
 """
 import os, sys, time, subprocess, ctypes
 from ctypes import wintypes
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-EXE = os.environ.get("QP_EXE") or r"C:\Users\anweining01\AppData\Local\Programs\QuickPreview\QuickPreview.exe"
-LOGDIR = r"C:\Users\anweining01\AppData\Local\QuickPreview\logs"
-SAMPLES = r"D:\softDevelop\预览\quick-preview\test-samples"
+EXE = os.environ.get("QP_EXE") or os.path.expanduser(r"~\AppData\Local\Programs\QuickPreview\QuickPreview.exe")
+LOGDIR = os.path.expanduser(r"~\AppData\Local\QuickPreview\logs")
+SAMPLES = os.path.join(ROOT, "test-samples")
 LOGS = ("app.log", "hook.log", "preview.log", "media.log", "web.log", "error.log")
 
 u32 = ctypes.WinDLL("user32", use_last_error=True)
