@@ -13,6 +13,9 @@ namespace QuickPreview
     /// </summary>
     public class AboutForm : Form
     {
+        /// <summary>项目主页。关于窗口、安装包信息统一用这一处，避免各处写不一样。</summary>
+        public const string RepoUrl = "https://github.com/mengyuefeitian/quickpreview";
+
         public AboutForm()
         {
             Text = "关于 QuickPreview";
@@ -24,7 +27,7 @@ namespace QuickPreview
             TopMost = true;
             AutoScaleMode = AutoScaleMode.Dpi;
             Font = new Font("Microsoft YaHei", 9f);
-            ClientSize = new Size(460, 330);
+            ClientSize = new Size(460, 352);
             BackColor = Color.White;
             try { Icon = MainForm.AppIcon(); } catch { }
 
@@ -76,10 +79,22 @@ namespace QuickPreview
                 Text = BuildInfo()
             };
 
+            var link = new LinkLabel
+            {
+                Text = "GitHub：" + RepoUrl,
+                Location = new Point(24, 260),
+                Size = new Size(412, 20),
+                Font = new Font("Microsoft YaHei", 9f),
+                LinkColor = Color.FromArgb(0, 102, 204),
+                VisitedLinkColor = Color.FromArgb(0, 102, 204)
+            };
+            link.Links.Add(0, link.Text.Length, RepoUrl);
+            link.LinkClicked += (s, e) => OpenUrl((string)e.Link.LinkData);
+
             var btnLog = new Button
             {
                 Text = "查看日志…",
-                Location = new Point(24, 268),
+                Location = new Point(24, 290),
                 Size = new Size(110, 32)
             };
             btnLog.Click += (s, e) => LogViewerForm.OpenDir(Log.LogDir);
@@ -87,7 +102,7 @@ namespace QuickPreview
             var btnOk = new Button
             {
                 Text = "确定",
-                Location = new Point(326, 268),
+                Location = new Point(326, 290),
                 Size = new Size(110, 32)
             };
             // 非模态显示（托盘菜单里弹模态框容易卡住菜单），点确定直接关闭
@@ -99,8 +114,22 @@ namespace QuickPreview
             Controls.Add(ver);
             Controls.Add(desc);
             Controls.Add(info);
+            Controls.Add(link);
             Controls.Add(btnLog);
             Controls.Add(btnOk);
+        }
+
+        private static void OpenUrl(string url)
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+                Log.I(LogKind.App, "打开项目主页：" + url);
+            }
+            catch (Exception ex)
+            {
+                Log.E(LogKind.App, "打开链接失败：" + url, ex);
+            }
         }
 
         private static string BuildInfo()
@@ -108,6 +137,7 @@ namespace QuickPreview
             var sb = new System.Text.StringBuilder();
             sb.AppendLine("产品：QuickPreview —— 空格键快速预览服务");
             sb.AppendLine("版本：" + AppVersion.Current);
+            sb.AppendLine("主页：" + RepoUrl);
             sb.AppendLine("运行时：.NET " + Environment.Version);
             try
             {

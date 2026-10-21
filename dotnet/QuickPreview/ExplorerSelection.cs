@@ -21,6 +21,23 @@ namespace QuickPreview
         [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
         private static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
 
+        [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        private static extern IntPtr FindWindowEx(IntPtr hwndParent, IntPtr hwndChildAfter,
+                                                  string lpszClass, string lpszWindow);
+
+        /// <summary>
+        /// IShellBrowser（IID 000214E2-…-C000-000000000046），只取 IOleWindow::GetWindow()。
+        /// 对 InterfaceIsIUnknown 接口，C# 声明的方法从 vtable 槽 3 开始（前三个是 IUnknown），
+        /// 因此这里的 GetWindow() 正好落在槽 3，与 IOleWindow 的布局一致。
+        /// 用它反查「这个 ShellWindow 属于资源管理器里的哪个标签页窗口」。
+        /// </summary>
+        [ComImport, Guid("000214E2-0000-0000-C000-000000000046")]
+        [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        private interface IShellBrowser
+        {
+            IntPtr GetWindow();
+        }
+
         public static string ClassNameOf(IntPtr hWnd)
         {
             var sb = new StringBuilder(256);
@@ -84,6 +101,19 @@ namespace QuickPreview
                     return DesktopSelection.GetSelection();
                 }
 
+                // Windows 11 22H2+ 的资源管理器支持多标签页：同一个顶层窗口（hwnd）下挂了
+                // 多个 ShellWindow（每个标签页一个），而它们的 HWND 属性全都等于顶层 hwnd
+                // —— 只比 hwnd 根本分不出当前看的是哪个标签页。
+                // 判据：资源管理器给每个标签页建了一个 ShellTabWindowClass 子窗口，
+                // 且 z-order 最上面那个（ClassNN 里的 ShellTabWindowClass1）就是当前激活的标签页；
+                // FindWindowEx 按 z-order 返回第一个匹配的子窗口，正好拿到它。
+                // 再对每个 ShellWindow 用 IShellBrowser::GetWindow() 反查它属于哪个标签页，两边一比即可锁定。
+                IntPtr activeTab = FindWindowEx(fg, IntPtr.Zero, "ShellTabWindowClass", null);
+                Log.D(LogKind.Hook, "活动标签页子窗口 hwnd=" + activeTab.ToInt64()
+                    + (activeTab == IntPtr.Zero
+                        ? "（该窗口没有标签页，按整窗口处理）"
+                        : "（多标签页：只认这一个标签）"));
+
                 var shellType = Type.GetTypeFromProgID("Shell.Application");
                 if (shellType == null)
                 {
@@ -95,6 +125,12 @@ namespace QuickPreview
                 Log.D(LogKind.Hook, "Shell.Application 已创建，正在枚举 ShellWindows …");
                 dynamic windows = shell.Windows();
                 Log.D(LogKind.Hook, "ShellWindows 枚举接口已获取");
+
+                // strict：hwnd + class + 活动标签三者都命中（多标签页下的正确答案）
+                var strict = new List<dynamic>();
+                // loose：只命中 hwnd + class —— 标签 hwnd 取不到时的回退，
+                // 绝不能因为识别失败就让「按空格」彻底没反应。
+                var loose = new List<dynamic>();
 
                 int index = 0;
                 foreach (var w in windows)
@@ -110,9 +146,7 @@ namespace QuickPreview
                         if (!isForeground) continue;
 
                         // 同一个 hwnd 可能对应多个 ShellWindow（资源管理器多标签页、
-                        // 以及桌面那个 ShellWindow）。只看 hwnd 会把"桌面上次选中的视频"
-                        // 混进结果 —— 表现为「在桌面文件夹里预览任何文件，显示的都是那个视频」。
-                        // 这里加两道闸：窗口 class 必须与前台一致，选中项必须属于该窗口的目录。
+                        // 以及桌面那个 ShellWindow）。先看 class 是否与前台一致。
                         string wCls = ClassNameOf(new IntPtr(hwnd));
                         if (!string.IsNullOrEmpty(wCls)
                             && !string.Equals(wCls, fgClass, StringComparison.OrdinalIgnoreCase))
@@ -122,42 +156,27 @@ namespace QuickPreview
                             continue;
                         }
 
-                        string locUrl = null;
-                        try { locUrl = Convert.ToString(w.LocationURL); } catch { }
-                        string locDir = FileUrlToDir(locUrl);
-                        if (!string.IsNullOrEmpty(locUrl))
-                            Log.D(LogKind.Hook, "前台窗口目录：" + locUrl + " → " + (locDir ?? "非文件系统"));
+                        loose.Add(w);
 
-                        var doc = w.Document;
-                        if (doc == null)
+                        if (activeTab == IntPtr.Zero)
                         {
-                            Log.W(LogKind.Hook, "前台窗口没有 Document 对象（不是资源管理器文件视图，或进程权限不匹配）");
+                            strict.Add(w);   // 没有标签页，无从也无须区分
                             continue;
                         }
 
-                        try
+                        IntPtr? tab = TabHwndOf(w);
+                        if (tab.HasValue && tab.Value == activeTab)
                         {
-                            var items = doc.SelectedItems();
-                            foreach (var it in items)
-                            {
-                                string p = it.Path;
-                                if (string.IsNullOrEmpty(p)) continue;
-
-                                // 选中项必须落在该窗口显示的目录里。
-                                // 桌面 ShellWindow 与"桌面文件夹窗口"的 Location 常常都是「桌面」，
-                                // 光靠 LocationName 分不开，用真实父目录比对才可靠。
-                                if (locDir != null && !SameDir(Path.GetDirectoryName(p), locDir))
-                                {
-                                    Log.D(LogKind.Hook, "跳过不属于当前窗口目录的选中项：" + p);
-                                    continue;
-                                }
-                                result.Add(p);
-                            }
-                            Log.I(LogKind.Hook, "读取到选中项 " + result.Count + " 个：" + Join(result, 6));
+                            Log.D(LogKind.Hook, string.Format(
+                                "窗口#{0} 属于活动标签页（tab hwnd={1}）", index, tab.Value.ToInt64()));
+                            strict.Add(w);
                         }
-                        catch (Exception ex)
+                        else
                         {
-                            Log.W(LogKind.Hook, "doc.SelectedItems() 读取失败：" + ex.Message);
+                            Log.D(LogKind.Hook, string.Format(
+                                "跳过窗口#{0}：非活动标签页（tab hwnd={1}，活动={2}）",
+                                index, tab.HasValue ? tab.Value.ToInt64().ToString() : "取不到",
+                                activeTab.ToInt64()));
                         }
                     }
                     catch (Exception ex)
@@ -166,7 +185,29 @@ namespace QuickPreview
                     }
                 }
 
-                Log.D(LogKind.Hook, "ShellWindows 共 " + index + " 个窗口");
+                Log.D(LogKind.Hook, string.Format(
+                    "ShellWindows 共 {0} 个窗口；严格命中 {1} 个，宽松命中 {2} 个",
+                    index, strict.Count, loose.Count));
+
+                var targets = strict;
+                if (targets.Count == 0 && loose.Count > 0)
+                {
+                    Log.W(LogKind.Hook, "标签页识别未命中（IShellBrowser 取不到或 hwnd 对不上），"
+                        + "退化为按整窗口读取，避免按空格完全无反应");
+                    targets = loose;
+                }
+
+                // 命中即停：多标签页下绝不能把每个标签页的选中项都累加进来，
+                // 否则取第一个永远是「标签页1 选中的东西」——在任何标签页里预览都是同一个文件。
+                foreach (var w in targets)
+                {
+                    var picked = ReadSelection(w);
+                    if (picked != null && picked.Count > 0)
+                    {
+                        result.AddRange(picked);
+                        break;
+                    }
+                }
             }
             catch (Exception ex)
             {
@@ -182,6 +223,91 @@ namespace QuickPreview
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// 取某个 ShellWindow 所属的标签页窗口 hwnd（经 IShellBrowser::GetWindow）。
+        /// 取不到返回 null —— 调用方会退化处理，绝不能因为这一步失败就让按空格没反应。
+        /// </summary>
+        private static IntPtr? TabHwndOf(object w)
+        {
+            IntPtr pUnk = IntPtr.Zero, pBr = IntPtr.Zero;
+            try
+            {
+                pUnk = Marshal.GetIUnknownForObject(w);
+                if (pUnk == IntPtr.Zero) return null;
+
+                Guid iid = typeof(IShellBrowser).GUID;
+                int hr = Marshal.QueryInterface(pUnk, ref iid, out pBr);
+                if (hr != 0 || pBr == IntPtr.Zero) return null;
+
+                var browser = (IShellBrowser)Marshal.GetObjectForIUnknown(pBr);
+                IntPtr h = browser.GetWindow();
+                return h == IntPtr.Zero ? (IntPtr?)null : h;
+            }
+            catch (Exception ex)
+            {
+                Log.D(LogKind.Hook, "IShellBrowser 取标签 hwnd 失败：" + ex.Message);
+                return null;
+            }
+            finally
+            {
+                if (pBr != IntPtr.Zero) Marshal.Release(pBr);
+                if (pUnk != IntPtr.Zero) Marshal.Release(pUnk);
+            }
+        }
+
+        /// <summary>
+        /// 读取单个 ShellWindow 的选中项；返回 null 表示该窗口没读到（调用方继续试下一个）。
+        /// </summary>
+        private static List<string> ReadSelection(dynamic w)
+        {
+            string locDir = null;
+            try
+            {
+                string locUrl = Convert.ToString(w.LocationURL);
+                locDir = FileUrlToDir(locUrl);
+                if (!string.IsNullOrEmpty(locUrl))
+                    Log.D(LogKind.Hook, "窗口目录：" + locUrl + " → " + (locDir ?? "非文件系统"));
+            }
+            catch { }
+
+            var doc = w.Document;
+            if (doc == null)
+            {
+                Log.W(LogKind.Hook, "窗口没有 Document 对象（不是资源管理器文件视图，或进程权限不匹配）");
+                return null;
+            }
+
+            try
+            {
+                var picked = new List<string>();
+                var items = doc.SelectedItems();
+                foreach (var it in items)
+                {
+                    string p = it.Path;
+                    if (string.IsNullOrEmpty(p)) continue;
+
+                    // 选中项必须落在该窗口显示的目录里。
+                    // 桌面 ShellWindow 与"桌面文件夹窗口"的 Location 常常都是「桌面」，
+                    // 光靠 LocationName 分不开，用真实父目录比对才可靠。
+                    if (locDir != null && !SameDir(Path.GetDirectoryName(p), locDir))
+                    {
+                        Log.D(LogKind.Hook, "跳过不属于当前窗口目录的选中项：" + p);
+                        continue;
+                    }
+                    picked.Add(p);
+                }
+                if (picked.Count == 0) return null;
+
+                Log.I(LogKind.Hook, "读取到选中项 " + picked.Count + " 个：" + Join(picked, 6));
+                return picked;
+            }
+            catch (Exception ex)
+            {
+                Log.W(LogKind.Hook, "doc.SelectedItems() 读取失败：" + ex.Message);
+                return null;
+            }
         }
 
         private static string SafeName(dynamic w)

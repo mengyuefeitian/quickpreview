@@ -27,7 +27,7 @@ test-samples/__pycache__/
 
 # 真实业务文档与调试截图：含第三方厂商/客户信息，一律不入库。
 # 回归请用 make_samples.py / make_rich_docx.py 生成的合成样本（sample.* / rich.docx / multipage.docx）。
-test-samples/qax_manual.docx
+test-samples/real_*.docx
 test-samples/private_*
 test-samples/_shots/
 test-samples/_*.png
