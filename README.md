@@ -1,18 +1,24 @@
-# QuickPreview
+<div align="center">
 
-**预览** —— 在 Windows 资源管理器里选中文件，按空格直接看内容。
+<h1>QuickPreview</h1>
 
-[![Release](https://img.shields.io/github/v/release/mengyuefeitian/quickpreview?style=flat-square&color=2f81f7)](https://github.com/mengyuefeitian/quickpreview/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/mengyuefeitian/quickpreview/total?style=flat-square&color=3fb950)](https://github.com/mengyuefeitian/quickpreview/releases)
-[![Platform](https://img.shields.io/badge/Windows-10%201903%2B%20%7C%2011-0078d4?style=flat-square)](#系统要求)
-[![.NET](https://img.shields.io/badge/.NET-8.0-512bd4?style=flat-square)](#系统要求)
-[![License](https://img.shields.io/badge/license-MIT-orange?style=flat-square)](LICENSE)
-
-<p align="center">
-  <a href="https://github.com/mengyuefeitian/quickpreview/releases/latest">
-    <img src="https://img.shields.io/badge/%E4%B8%8B%E8%BD%BD%E5%AE%89%E8%A3%85%E5%8C%85-QuickPreview--Setup--x64.exe-2ea043?style=for-the-badge" alt="下载安装包" height="40">
-  </a>
+<p>
+  在 Windows 资源管理器里选中文件，<b>按空格直接看内容</b>
 </p>
+
+<p>
+  <a href="https://github.com/mengyuefeitian/quickpreview/releases/latest"><img src="https://img.shields.io/github/v/release/mengyuefeitian/quickpreview?style=flat-square&color=2f81f7" alt="Release"></a>
+  <a href="https://github.com/mengyuefeitian/quickpreview/releases"><img src="https://img.shields.io/github/downloads/mengyuefeitian/quickpreview/total?style=flat-square&color=3fb950" alt="Downloads"></a>
+  <a href="#系统要求"><img src="https://img.shields.io/badge/Windows-10%201903%2B%20%7C%2011-0078d4?style=flat-square" alt="Platform"></a>
+  <a href="#系统要求"><img src="https://img.shields.io/badge/.NET-8.0-512bd4?style=flat-square" alt=".NET"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-orange?style=flat-square" alt="License"></a>
+</p>
+
+<p>
+  <a href="https://github.com/mengyuefeitian/quickpreview/releases/latest"><img src="https://img.shields.io/badge/%E4%B8%8B%E8%BD%BD%E5%AE%89%E8%A3%85%E5%8C%85-QuickPreview--Setup--x64.exe-2ea043?style=for-the-badge" alt="下载安装包" height="40"></a>
+</p>
+
+</div>
 
 ---
 
