@@ -14,7 +14,7 @@ def main():
     time.sleep(0.8)
     env = dict(os.environ)
     env["QP_DEV_CDP_PORT"] = port
-    p = subprocess.Popen([EXE, "--preview", path], env=env)
+    p = subprocess.Popen([EXE, "--preview", path, "--quiet"], env=env)
     print("PID", p.pid, "PORT", port)
 
 if __name__ == "__main__":

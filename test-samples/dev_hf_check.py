@@ -19,7 +19,7 @@ def run(path, wait=9.0):
     kill()
     env = dict(os.environ)
     env["QP_DEV_CDP_PORT"] = "9222"
-    subprocess.Popen([EXE, "--preview", os.path.abspath(path)], env=env)
+    subprocess.Popen([EXE, "--preview", os.path.abspath(path), "--quiet"], env=env)
     time.sleep(wait)
     r = subprocess.run([NODE, EVAL, PROBE, "1200"], capture_output=True, text=True, timeout=120)
     return (r.stdout or r.stderr).strip().replace("\n", " / ")

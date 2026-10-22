@@ -77,7 +77,7 @@ def run_one(path, wait=25.0):
     kill_app()
     time.sleep(0.6)
     before = sizes()
-    subprocess.Popen([EXE, "--preview", os.path.abspath(path)])
+    subprocess.Popen([EXE, "--preview", os.path.abspath(path), "--quiet"])
     t0 = time.time()
     hwnd = None
     all_new = ""

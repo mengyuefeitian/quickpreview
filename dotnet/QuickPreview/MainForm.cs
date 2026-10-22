@@ -31,6 +31,12 @@ namespace QuickPreview
 
         // 经宿主对象直传（base64）给页面的文件大小上限，超过则回退到 __local 流式读取
         private const long MaxInlineBytes = 60L * 1024 * 1024;
+
+        /// <summary>
+        /// 单个 Range 响应体的上限（8MB）。见 OnWebResourceRequested 里的详细说明：
+        /// 播放器首包固定发 `Range: bytes=0-`，原样回整个文件会把 WebView2 浏览器进程顶爆。
+        /// </summary>
+        private const long MaxRangeChunk = 8L * 1024 * 1024;
         private const int VK_SPACE = 0x20;
         private const int HeartbeatMs = 30000;          // 心跳间隔（同时用于钩子存活检查）
 
@@ -53,10 +59,26 @@ namespace QuickPreview
         [DllImport("user32.dll")]
         private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
 
-        private static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
+        [DllImport("user32.dll")]
+        private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+        // 设置"所有者窗口"：owner 关系由系统维护 z 序 —— 预览窗永远贴在 owner 之上，
+        // 但绝不会压过用户后来激活的其它程序。这是"只浮在资源管理器上层"的正确语义。
+        [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = true)]
+        private static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+
+        [DllImport("user32.dll")]
+        private static extern bool IsWindow(IntPtr hWnd);
+
+        private const int GWLP_HWNDPARENT = -8;
+
+        private static readonly IntPtr HWND_TOP = IntPtr.Zero;
         private const uint SWP_NOSIZE = 0x0001;
         private const uint SWP_NOMOVE = 0x0002;
+        private const uint SWP_NOZORDER = 0x0004;
+        private const uint SWP_NOACTIVATE = 0x0010;
         private const uint SWP_SHOWWINDOW = 0x0040;
+        private const int SW_SHOWNOACTIVATE = 4;
 
         // 用于「吞掉空格却没打开预览」时补发一次空格，避免用户操作被吃掉
         [DllImport("user32.dll", SetLastError = true)]
@@ -98,6 +120,17 @@ namespace QuickPreview
         private readonly System.Windows.Forms.Timer _raiseTimer
             = new System.Windows.Forms.Timer { Interval = 300 };   // 置顶补偿定时器
 
+        // ---------- 层级跟随（不抢全局置顶） ----------
+        // 产品行为：预览窗口只需要浮在「触发它那个资源管理器窗口」之上，
+        // 用户切到 Word/浏览器等别的程序时，预览窗口要老老实实沉到后面去，
+        // 否则两个窗口互相遮挡、没法并排对比。
+        // 这里用 700ms 轮询 GetForegroundWindow（只在预览显示时运行），
+        // 前台窗口一变就调一次 z 序，且全程 SWP_NOACTIVATE 不抢焦点。
+        private readonly System.Windows.Forms.Timer _zTimer
+            = new System.Windows.Forms.Timer { Interval = 700 };
+        private IntPtr _zLastFg = IntPtr.Zero;
+        private readonly bool _quiet;                 // --quiet：显示但不抢焦点、不介入层级
+
         // ---------- 拖动 / 缩放预览窗口 ----------
         // 窗是无边框的（FormBorderStyle.None），没有系统标题栏可拖、也没有边框可拉，
         // 所以由前端在鼠标按下时上报方向（标题栏 / 左/右/上/下/四角），
@@ -119,9 +152,11 @@ namespace QuickPreview
         private readonly HashSet<string> _allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         /// <param name="startupFile">排查用：启动后直接预览该文件（--preview 参数），正常为 null</param>
-        public MainForm(string startupFile = null)
+        /// <param name="quiet">排查用 --quiet：显示时不抢焦点、不参与层级跟随，避免挡住正在做别的事的人</param>
+        public MainForm(string startupFile = null, bool quiet = false)
         {
             _startupFile = startupFile;
+            _quiet = quiet;
             Text = "QuickPreview";
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.Manual;
@@ -130,7 +165,12 @@ namespace QuickPreview
             MinimumSize = new Size(AppConfig.MinimumWidth, AppConfig.MinimumHeight);
             BackColor = Color.FromArgb(30, 30, 30);
             ShowInTaskbar = false;
-            TopMost = true;
+
+            // 注意：**不要设 TopMost**。
+            // 早期版本为了"保证不被资源管理器抢回 z 序"直接上了全局置顶，结果是
+            // 用户切到 Word/另一个资源管理器窗口做对比时，预览窗永远压在所有人上面，
+            // 点不掉也拖不开。现在的策略是"只跟随触发它的那个资源管理器窗口"，
+            // 具体见 FollowZOrderTimer 与 RaiseAboveOwner。
 
             // 拖动 / 缩放：无边框窗体没有系统标题栏与边框，只能由前端上报"按住"，
             // 再由这里按鼠标当前位置实时改 Bounds（见 BeginWindowDrag）
@@ -161,12 +201,16 @@ namespace QuickPreview
             Activated += (s, e) => { _previewActive = true; };
             Deactivate += (s, e) => { _previewActive = false; };
 
-            // 有些场景下资源管理器会在我们弹出后立刻把 z 序抢回去，这里做一次补偿置顶
+            // 有些场景下资源管理器会在我们弹出后立刻把 z 序抢回去，这里做一次补偿：
+            // 若此刻前台仍是触发预览的资源管理器窗口，就把预览窗重新插到它上方
+            // （SWP_NOACTIVATE，不抢焦点，也不会压过用户已经切过去的其它程序）
             _raiseTimer.Tick += (s, e) =>
             {
                 _raiseTimer.Stop();
-                if (_previewVisible && Visible) ForceToFront();
+                if (_previewVisible && Visible) RaiseAboveOwner();
             };
+
+            _zTimer.Tick += (s, e) => FollowZOrder();
 
             // WebView2 初始化是最耗时的一步（冷启动可达数秒），必须最先开始；
             // 否则用户在它就绪前按空格，会多等一大截才看到内容。
@@ -185,6 +229,21 @@ namespace QuickPreview
             // 所以提示改到读取失败的分支里（见 TriggerPreviewFromExplorer）。
             if (Program.IsElevated)
                 Log.W(LogKind.App, "当前进程处于管理员完整性级别；若读取选中项失败，会提示切回普通权限");
+
+            // --preview 排查入口没有经过 Ctrl+空格，这里在进程刚起来时抓一次前台窗口，
+            // 让"宿主资源管理器"与真实触发路径保持一致（真实路径由 TriggerPreviewFromExplorer 设置）。
+            // 只在前台确实是文件窗口时才记，绝不认一个不相干的程序当宿主。
+            try
+            {
+                IntPtr cur = GetForegroundWindow();
+                if (_lastExplorer == IntPtr.Zero
+                    && ExplorerSelection.IsCandidateClass(ExplorerSelection.ClassNameOf(cur)))
+                {
+                    _lastExplorer = cur;
+                    Log.D(LogKind.Preview, "启动时记录宿主资源管理器窗口：0x" + cur.ToString("X"));
+                }
+            }
+            catch { }
         }
 
         // ---------- 图标 ----------
@@ -206,6 +265,9 @@ namespace QuickPreview
         {
             base.SetVisibleCore(_allowShow && value);
         }
+
+        // --quiet（排查/回归测试）：Show() 时用 SW_SHOWNOACTIVATE，不抢走用户当前窗口的焦点
+        protected override bool ShowWithoutActivation => _quiet;
 
         // ---------- 托盘 ----------
         private void InitTray()
@@ -579,6 +641,21 @@ namespace QuickPreview
             if (siblings != null)
                 foreach (var s in siblings) _allowed.Add(s);
 
+            // 记录"宿主窗口"：用于后面的层级跟随（只跟随这个资源管理器窗口）。
+            // --preview 入口没有经过 Ctrl+空格，_lastExplorer 是空的，这里补一次；
+            // 前台不是资源管理器窗口时保持原值，绝不让预览窗去黏一个不相干的程序。
+            try
+            {
+                if (_lastExplorer == IntPtr.Zero
+                    || !ExplorerSelection.IsCandidateClass(ExplorerSelection.ClassNameOf(_lastExplorer)))
+                {
+                    IntPtr cur = GetForegroundWindow();
+                    if (ExplorerSelection.IsCandidateClass(ExplorerSelection.ClassNameOf(cur)))
+                        _lastExplorer = cur;
+                }
+            }
+            catch { }
+
             // 已在预览中：切到别的文件 → 先让页面停掉上一次渲染，再打开新的（避免串文件）
             bool switching = _previewVisible
                 && !string.Equals(_currentPath, path, StringComparison.OrdinalIgnoreCase);
@@ -594,6 +671,9 @@ namespace QuickPreview
             _previewVisible = true;
             _allowShow = true;
             if (!Visible) Show();
+            ApplyOwner();                // 建立 owner 关系：只浮在这个资源管理器窗口之上
+            _zLastFg = IntPtr.Zero;      // 强制下一拍重新判定一次层级
+            if (!_quiet) _zTimer.Start();
             ForceToFront();
             _raiseTimer.Stop();
             _raiseTimer.Start();       // 300ms 后再补一次，防止资源管理器抢回 z 序
@@ -620,11 +700,14 @@ namespace QuickPreview
         }
 
         /// <summary>
-        /// 把预览窗口可靠地推到最前。
+        /// 弹出预览时把窗口带到前面并拿到焦点（用户刚按了空格，接着要在预览里滚动/翻页）。
         /// 只调 BringToFront/Activate 不够：我们不是前台进程，Windows 的"防抢焦点"会把
         /// 新弹窗插到当前前台窗口（资源管理器）后面，表现为"预览窗口躲在文件夹背后"。
-        /// 这里用 AttachThreadInput + HWND_TOPMOST + SetForegroundWindow 组合拳，
-        /// 并把结果写日志，便于实机排查。
+        /// 这里用 AttachThreadInput + SetForegroundWindow 组合拳，并把结果写日志。
+        ///
+        /// 注意：**不再用 HWND_TOPMOST**。那是"全局置顶"，用户切到 Word 做对比时
+        /// 预览窗会一直压在别人上面，点不掉也拖不开。现在用普通的 HWND_TOP ——
+        /// 拿到焦点后本来就在最前，用户切走之后它自然沉下去。
         /// </summary>
         private void ForceToFront()
         {
@@ -632,7 +715,13 @@ namespace QuickPreview
             {
                 if (!IsHandleCreated) return;
 
-                TopMost = true;
+                if (_quiet)
+                {
+                    // 排查/回归入口：只显示，不激活、不抢焦点，绝不打断正在用电脑的人
+                    ShowWindow(Handle, SW_SHOWNOACTIVATE);
+                    Log.D(LogKind.Preview, "quiet 模式：显示预览窗口但不抢焦点");
+                    return;
+                }
 
                 IntPtr fg = GetForegroundWindow();
                 uint tidFg = fg == IntPtr.Zero ? 0 : GetWindowThreadProcessId(fg, IntPtr.Zero);
@@ -642,7 +731,7 @@ namespace QuickPreview
                 if (tidFg != 0 && tidFg != tidMe)
                     attached = AttachThreadInput(tidMe, tidFg, true);
 
-                SetWindowPos(Handle, HWND_TOPMOST, 0, 0, 0, 0,
+                SetWindowPos(Handle, HWND_TOP, 0, 0, 0, 0,
                     SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
                 bool ok = SetForegroundWindow(Handle);
 
@@ -653,13 +742,98 @@ namespace QuickPreview
                 _previewActive = true;
 
                 IntPtr now = GetForegroundWindow();
-                Log.D(LogKind.Preview, string.Format("置顶：SetForegroundWindow={0}，置顶后前台为本窗口={1}",
+                Log.D(LogKind.Preview, string.Format("前置：SetForegroundWindow={0}，前台为本窗口={1}",
                     ok, now == Handle));
             }
             catch (Exception ex)
             {
-                Log.W(LogKind.Preview, "置顶预览窗口失败：" + ex.Message);
+                Log.W(LogKind.Preview, "前置预览窗口失败：" + ex.Message);
             }
+        }
+
+        /// <summary>
+        /// 把预览窗口插到「触发它的那个资源管理器窗口」上方，但不激活、不抢焦点。
+        /// 仅当前台确实是那个资源管理器窗口时才动作 —— 用户已经切到别的程序就不打扰。
+        /// </summary>
+        private void RaiseAboveOwner()
+        {
+            try
+            {
+                if (_quiet || !_previewVisible || !Visible || !IsHandleCreated) return;
+                if (_lastExplorer == IntPtr.Zero) return;
+                if (GetForegroundWindow() != _lastExplorer) return;
+
+                SetWindowPos(Handle, _lastExplorer, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            }
+            catch (Exception ex)
+            {
+                Log.D(LogKind.Preview, "跟随层级失败：" + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// 把预览窗口的 owner 设为「触发它的那个资源管理器窗口」。
+        ///
+        /// 为什么用 owner 而不是 SetWindowPos 硬插 z 序：Windows 不允许后台窗口压住
+        /// 前台窗口，硬插会被系统立刻弹回去（实测：explorer 为前台时
+        /// SetWindowPos(preview, explorer) 之后 0.7s，preview 又回到 explorer 下面）。
+        /// owner 关系由系统自己维护 —— owned 窗口永远贴在 owner 之上，但 owner 不是
+        /// 前台时它也不会越到别的程序前面，正好是「只浮在当前文件所在的资源管理器上层」。
+        ///
+        /// 实测：owner 窗口被关掉时，系统只会解除关系，不会连带销毁预览窗，进程也还在。
+        /// </summary>
+        private void ApplyOwner()
+        {
+            try
+            {
+                if (!IsHandleCreated) return;
+
+                IntPtr owner = IntPtr.Zero;
+                if (_lastExplorer != IntPtr.Zero && IsWindow(_lastExplorer)
+                    && ExplorerSelection.IsCandidateClass(ExplorerSelection.ClassNameOf(_lastExplorer)))
+                    owner = _lastExplorer;
+
+                SetWindowLongPtr(Handle, GWLP_HWNDPARENT, owner);
+                Log.D(LogKind.Preview, string.Format("预览窗口 owner = {0}（{1}）",
+                    owner == IntPtr.Zero ? "(无)" : "0x" + owner.ToString("X"),
+                    owner == IntPtr.Zero ? "未识别到资源管理器窗口" : "资源管理器"));
+            }
+            catch (Exception ex)
+            {
+                Log.D(LogKind.Preview, "设置 owner 失败：" + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// 层级跟随：只在「前台窗口发生变化」时动作一次。
+        /// 前台 == 触发预览的资源管理器窗口 → 浮到它上面（不抢焦点）；
+        /// 前台换成其它程序（Word、浏览器、另一个资源管理器窗口）→ 什么都不做。
+        /// 因为窗口已经不是 topmost，自然被压在下面，正好让用户并排对比。
+        /// </summary>
+        private void FollowZOrder()
+        {
+            try
+            {
+                IntPtr fg = GetForegroundWindow();
+                if (fg == _zLastFg) return;
+                _zLastFg = fg;
+                if (_quiet || !_previewVisible || !Visible) return;
+                if (fg == IntPtr.Zero || fg == Handle) return;
+
+                // 宿主资源管理器窗口已经关掉 → 解除 owner，避免窗口黏在一个死句柄上
+                if (_lastExplorer != IntPtr.Zero && !IsWindow(_lastExplorer))
+                {
+                    Log.D(LogKind.Preview, "宿主资源管理器窗口已关闭，解除 owner 关系");
+                    _lastExplorer = IntPtr.Zero;
+                    ApplyOwner();
+                    return;
+                }
+
+                if (_lastExplorer != IntPtr.Zero && fg == _lastExplorer)
+                    RaiseAboveOwner();
+            }
+            catch { }
         }
 
         private void SendOpen(string path, List<string> siblings)
@@ -790,6 +964,8 @@ namespace QuickPreview
         public void HidePreview()
         {
             _raiseTimer.Stop();
+            _zTimer.Stop();
+            _zLastFg = IntPtr.Zero;
             _previewVisible = false;
             _previewActive = false;
             _currentPath = null;
@@ -987,62 +1163,12 @@ namespace QuickPreview
                 string range = null;
                 try { range = e.Request.Headers.GetHeader("Range"); } catch { }
 
-                long start = 0;
-                long end = total - 1;
-                int status = 200;
-                string reason = "OK";
-                string contentRange = null;
-
-                if (!string.IsNullOrEmpty(range) && range.StartsWith("bytes="))
-                {
-                    string spec = range.Substring(6);
-                    // 多区间（逗号分隔）极少见，只取第一段
-                    int comma = spec.IndexOf(',');
-                    if (comma >= 0) spec = spec.Substring(0, comma);
-
-                    var parts = spec.Split('-');
-                    string a = parts.Length > 0 ? parts[0].Trim() : string.Empty;
-                    string b = parts.Length > 1 ? parts[1].Trim() : string.Empty;
-
-                    long parsed;
-                    if (a.Length == 0)
-                    {
-                        // bytes=-N → 最后 N 字节
-                        long suffix;
-                        if (long.TryParse(b, out suffix) && suffix > 0)
-                            start = Math.Max(0, total - suffix);
-                        end = total - 1;
-                    }
-                    else
-                    {
-                        if (long.TryParse(a, out parsed)) start = parsed;
-                        if (b.Length > 0)
-                        {
-                            if (long.TryParse(b, out parsed)) end = parsed;
-                        }
-                        else end = total - 1;
-                    }
-
-                    if (total <= 0)
-                    {
-                        start = 0; end = 0;
-                    }
-                    else
-                    {
-                        if (start < 0) start = 0;
-                        if (end >= total) end = total - 1;
-                        if (start >= total) start = total - 1;
-                        if (end < start) end = start;
-                    }
-
-                    status = 206;
-                    reason = "Partial Content";
-                    contentRange = $"bytes {start}-{end}/{total}";
-                }
-                else if (total <= 0)
-                {
-                    end = -1;
-                }
+                // 区间解析 + 单次分块上限，全部交给 FileRange（纯函数，有独立断言用例）
+                RangeSpec rs = FileRange.Resolve(range, total, MaxRangeChunk);
+                long start = rs.Start;
+                long end = rs.End;
+                string contentRange = rs.ContentRange;
+                long len = rs.Length;
 
                 var headers = new StringBuilder();
                 headers.Append($"Content-Type: {mime}").Append("\r\n");
@@ -1051,9 +1177,12 @@ namespace QuickPreview
                 if (contentRange != null)
                     headers.Append($"Content-Range: {contentRange}").Append("\r\n");
 
-                long len = Math.Max(0, end - start + 1);
-                Log.D(LogKind.Media, string.Format("__local {0} {1}：{2}，{3:N0} 字节（{4:N0}–{5:N0} / 共 {6:N0}），mime={7}",
-                    status, Path.GetFileName(p), reason, len, start, end, total, mime));
+                Log.D(LogKind.Media, string.Format("__local {0} {1}：{2}，{3:N0} 字节（{4:N0}–{5:N0} / 共 {6:N0}），mime={7}，请求 Range={8}",
+                    rs.Status, Path.GetFileName(p), rs.Reason, len, start, end, total, mime,
+                    string.IsNullOrEmpty(range) ? "(无)" : range));
+                if (rs.Capped)
+                    Log.I(LogKind.Media, string.Format("大文件分块回传：本次 {0:N0} 字节（客户端本可拿 {1:N0}），后续由播放器继续请求",
+                        len, rs.AskedLength));
 
                 FileStream fs = null;
                 try
@@ -1061,7 +1190,7 @@ namespace QuickPreview
                     fs = new FileStream(p, FileMode.Open, FileAccess.Read,
                         FileShare.ReadWrite | FileShare.Delete, 64 * 1024, FileOptions.SequentialScan);
                     if (start > 0) fs.Seek(start, SeekOrigin.Begin);
-                    Respond(e, status, reason, new ByteRangeStream(fs, len), headers.ToString());
+                    Respond(e, rs.Status, rs.Reason, new ByteRangeStream(fs, len), headers.ToString());
                     fs = null;   // 所有权已交给响应流，由它在读完/释放时关闭
                 }
                 finally

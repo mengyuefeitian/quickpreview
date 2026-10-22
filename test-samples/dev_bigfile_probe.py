@@ -17,7 +17,7 @@ wait = float(sys.argv[2]) if len(sys.argv) > 2 else 12.0
 subprocess.run(["taskkill", "/F", "/IM", "QuickPreview.exe"], capture_output=True)
 time.sleep(0.8)
 before = os.path.getsize(MEDIA) if os.path.exists(MEDIA) else 0
-subprocess.Popen([EXE, "--preview", target])
+subprocess.Popen([EXE, "--preview", target, "--quiet"])
 print("已启动预览，等待 %.0f 秒…" % wait)
 time.sleep(wait)
 subprocess.run(["taskkill", "/F", "/IM", "QuickPreview.exe"], capture_output=True)

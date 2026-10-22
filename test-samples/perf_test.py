@@ -56,7 +56,7 @@ def run_one(path, wait=30.0):
     kill_app()
     time.sleep(0.8)
     before = sizes()
-    subprocess.Popen([EXE, "--preview", os.path.abspath(path)])
+    subprocess.Popen([EXE, "--preview", os.path.abspath(path), "--quiet"])
     t0 = time.time()
     while time.time() - t0 < wait:
         txt = "\n".join(new_text(before).values())

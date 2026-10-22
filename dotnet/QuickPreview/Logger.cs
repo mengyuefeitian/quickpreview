@@ -49,6 +49,14 @@ namespace QuickPreview
         private static Task _worker;
         private static long _seq;
 
+        /// <summary>
+        /// 已 Shutdown（落盘线程停了）。之后任何 Log.xxx 都改成**同步**写盘：
+        /// 退出路径上还会记错误（比如崩溃自愈），异步队列没人消费就等于日志凭空消失，
+        /// 而且 _wake 已被释放，原来的 `_wake.Set()` 会抛 ObjectDisposedException ——
+        /// 在异常处理里再抛异常，进程就死得不明不白了。
+        /// </summary>
+        private static volatile bool _stopped;
+
         static Log()
         {
             try { Directory.CreateDirectory(LogDir); } catch { }
@@ -71,9 +79,11 @@ namespace QuickPreview
                 Enqueue(LogKind.Error, "ERROR", "[" + kind + "] " + msg, ex);
         }
 
-        /// <summary>立即落盘（退出前调用）。</summary>
+        /// <summary>立即落盘（退出前调用）。可重复调用，只有第一次生效。</summary>
         public static void Shutdown()
         {
+            if (_stopped) return;
+            _stopped = true;
             try
             {
                 _cts.Cancel();
@@ -168,8 +178,18 @@ namespace QuickPreview
             }
             w.Enqueue(level, text);
 
+            // 已停写（正在退出 / 崩溃自愈中）：同步落盘，保证这条一定留在文件里
+            if (_stopped)
+            {
+                try { w.Flush(); } catch { }
+                return;
+            }
+
             // 错误立即唤醒落盘线程，避免进程崩溃时丢失
-            if (level == "ERROR") _wake.Set();
+            if (level == "ERROR")
+            {
+                try { _wake.Set(); } catch { }
+            }
         }
 
         private static void WorkerLoop()

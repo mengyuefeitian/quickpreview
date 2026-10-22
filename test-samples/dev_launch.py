@@ -15,7 +15,7 @@ time.sleep(0.8)
 
 env = dict(os.environ)
 env["QP_DEV_CDP_PORT"] = "9222"
-subprocess.Popen([EXE, "--preview", target], env=env,
+subprocess.Popen([EXE, "--preview", target, "--quiet"], env=env,
                  creationflags=0x00000008)   # DETACHED_PROCESS
 time.sleep(3.5)
 print("launched:", target)
