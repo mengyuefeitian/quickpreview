@@ -23,6 +23,11 @@ SSL_CTX.verify_mode = ssl.CERT_NONE
 ENV_FILE = r"D:\工具管理\env.txt"
 API = "https://api.github.com"
 
+# Release 正文长度限制：CHANGELOG 可以写细，GitHub 的发布说明只写用户能感知的变化。
+# 早期版本越写越长（v1.6.6 一度到 2830 字），用户明确要求言简意赅，故在发布前拦一道。
+NOTE_SOFT_LIMIT = 1200      # 超过打警告
+NOTE_HARD_LIMIT = 1600      # 超过直接拒绝发布
+
 
 def token():
     s = open(ENV_FILE, encoding="utf-8").read()
@@ -92,6 +97,18 @@ def main():
         repo, tag, title, bodyfile = sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
         assets = sys.argv[6:]
         body = open(bodyfile, encoding="utf-8").read() if bodyfile != "-" else ""
+
+        # 长度守卫：详细内容放 CHANGELOG，Release 只保留几条要点
+        n = len(body)
+        if n > NOTE_HARD_LIMIT:
+            print("REFUSED: release body is %d chars (hard limit %d)." % (n, NOTE_HARD_LIMIT))
+            print("Keep only what users can notice; move the details into CHANGELOG.md.")
+            print("Template: docs/releases/_TEMPLATE.md")
+            return 1
+        if n > NOTE_SOFT_LIMIT:
+            print("WARN: release body is %d chars (> %d), consider trimming."
+                  % (n, NOTE_SOFT_LIMIT))
+
         st, d = call("GET", f"/repos/{repo}/releases/tags/{tag}")
         if st == 404:
             st, d = call("POST", f"/repos/{repo}/releases", {
@@ -117,6 +134,29 @@ def main():
                 print("FAIL upload", st, json.dumps(d2, ensure_ascii=False)[:400])
                 return 1
             print(f"  ok {d2['size']/1048576:.1f} MB, {time.time()-t0:.0f}s -> {d2['browser_download_url']}")
+        return 0
+
+    if cmd == "body":
+        # 只改某次 Release 的正文（改文案后同步，不必重新上传资产）
+        repo, tag, bodyfile = sys.argv[2], sys.argv[3], sys.argv[4]
+        body = open(bodyfile, encoding="utf-8").read()
+        n = len(body)
+        if n > NOTE_HARD_LIMIT:
+            print("REFUSED: release body is %d chars (hard limit %d)." % (n, NOTE_HARD_LIMIT))
+            return 1
+        if n > NOTE_SOFT_LIMIT:
+            print("WARN: release body is %d chars (> %d), consider trimming."
+                  % (n, NOTE_SOFT_LIMIT))
+        st, d = call("GET", f"/repos/{repo}/releases/tags/{tag}")
+        if st != 200:
+            print("FAIL query release", st, json.dumps(d, ensure_ascii=False)[:400])
+            return 1
+        st, d2 = call("PATCH", f"/repos/{repo}/releases/{d['id']}", {"body": body})
+        if st != 200:
+            print("FAIL patch release", st, json.dumps(d2, ensure_ascii=False)[:400])
+            return 1
+        print("updated %s: %d -> %d chars" % (tag, len(d.get("body") or ""), len(d2.get("body") or "")))
+        print(d2["html_url"])
         return 0
 
     print("unknown cmd")
