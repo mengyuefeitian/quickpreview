@@ -28,6 +28,27 @@ API = "https://api.github.com"
 NOTE_SOFT_LIMIT = 1200      # 超过打警告
 NOTE_HARD_LIMIT = 1600      # 超过直接拒绝发布
 
+# 标题统一为 "vX.Y.Z — 主题"：小写 v、空格+破折号+空格、主题 8~22 字、不带产品名。
+# 规范见 docs/releases/_TEMPLATE.md，检查脚本 test-samples/check_release_notes.py。
+TITLE_RE = re.compile(r"^v\d+\.\d+\.\d+ — \S.{5,23}$")
+
+
+def check_note(name, body):
+    """按发布说明规范校验，返回错误描述；合规返回 None。"""
+    if name is not None:
+        if not TITLE_RE.match(name or ""):
+            return "title must look like 'vX.Y.Z — <8~22 chars subject>' (em dash with spaces)"
+        if "QuickPreview" in name:
+            return "title must not repeat the product name (the page already shows it)"
+    if "### 安装" not in body:
+        return "body must contain a '### 安装' section"
+    if "CHANGELOG" not in body:
+        return "body must link to CHANGELOG at the end"
+    first = (body.strip().splitlines() or [""])[0]
+    if first.startswith("#"):
+        return "body must start with a one-line summary, not a heading"
+    return None
+
 
 def token():
     s = open(ENV_FILE, encoding="utf-8").read()
@@ -109,6 +130,12 @@ def main():
             print("WARN: release body is %d chars (> %d), consider trimming."
                   % (n, NOTE_SOFT_LIMIT))
 
+        err = check_note(title, body)
+        if err:
+            print("REFUSED: " + err)
+            print("Template: docs/releases/_TEMPLATE.md")
+            return 1
+
         st, d = call("GET", f"/repos/{repo}/releases/tags/{tag}")
         if st == 404:
             st, d = call("POST", f"/repos/{repo}/releases", {
@@ -147,6 +174,10 @@ def main():
         if n > NOTE_SOFT_LIMIT:
             print("WARN: release body is %d chars (> %d), consider trimming."
                   % (n, NOTE_SOFT_LIMIT))
+        err = check_note(None, body)
+        if err:
+            print("REFUSED: " + err)
+            return 1
         st, d = call("GET", f"/repos/{repo}/releases/tags/{tag}")
         if st != 200:
             print("FAIL query release", st, json.dumps(d, ensure_ascii=False)[:400])
