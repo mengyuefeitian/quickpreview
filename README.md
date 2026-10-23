@@ -38,6 +38,7 @@ QuickPreview 只做一件事：**接管空格键**。它在后台常驻，监听
 - **PPT 还原** — 母版 / 版式 / 幻灯片三级背景继承、主题配色、渐变、表格、组合形状。
 - **PDF** — 单页或双页横向翻页，等比缩放；矢量文字不糊。
 - **媒体直接播** — 浏览器不支持的封装（`mkv` `avi` `wmv` `ape` 等）用内置 ffmpeg 按需转码，结果缓存，第二次秒开。
+- **网页存档** — `.mhtml` / `.mht` 按 MIME 分包拆开，图片与 CSS 内联后还原成原页面，断网也能看。
 - **顺手的小功能** — 文件夹显示文件数与体积；`zip` 列出条目并可直接预览包内图片和文本；超大文本分块加载。
 
 ## 支持格式
@@ -51,6 +52,7 @@ QuickPreview 只做一件事：**接管空格键**。它在后台常驻，监听
 | Excel   | `xlsx` `xlsm` `xls` `csv` `tsv`                                                                                                                                         |
 | PPT     | `pptx` `pptm`                                                                                                                                                           |
 | 压缩包     | `zip`                                                                                                                                                                   |
+| 网页存档    | `mhtml` `mht`                                                                                                                                                           |
 | 音频      | `mp3` `flac` `wav` `ape` `ogg` `m4a` `aac` `wma`                                                                                                                        |
 | 视频      | `mp4` `mkv` `avi` `mov` `webm` `wmv` `flv` `m4v` `mpg` `mpeg`                                                                                                           |
 | 文件夹     | 目录（文件数 / 体积统计）                                                                                                                                                          |
@@ -139,7 +141,7 @@ npm run dev:app     # 终端 2
                    ffmpeg 转码 MediaTranscode.cs ◀── 页面请求 prepareMedia
 ```
 
-宿主层是 C# / .NET 8 WinForms，负责钩子、窗口、托盘、文件服务与转码；渲染层是 TypeScript + Vite，跑在 WebView2 里，按文件类型分派到各自的渲染器（`docxview.ts` / `pptx.ts` / `pdfview.ts` / `doc.ts` / `zip.ts` / `text.ts`）。
+宿主层是 C# / .NET 8 WinForms，负责钩子、窗口、托盘、文件服务与转码；渲染层是 TypeScript + Vite，跑在 WebView2 里，按文件类型分派到各自的渲染器（`docxview.ts` / `pptx.ts` / `pdfview.ts` / `doc.ts` / `zip.ts` / `mhtml.ts` / `text.ts`）。
 
 <details>
 
