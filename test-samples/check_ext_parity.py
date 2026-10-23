@@ -16,7 +16,7 @@ TS = os.path.join(ROOT, "src", "shared", "mime.ts")
 CS = os.path.join(ROOT, "dotnet", "QuickPreview", "FileTypes.cs")
 
 TS_GROUPS = ["IMAGE_EXT", "TEXT_EXT", "PDF_EXT", "OFFICE_EXT",
-             "AUDIO_EXT", "VIDEO_EXT", "ARCHIVE_EXT"]
+             "AUDIO_EXT", "VIDEO_EXT", "ARCHIVE_EXT", "WEBARCHIVE_EXT"]
 
 
 def parse_ts(path):
@@ -38,7 +38,7 @@ def parse_ts(path):
 def parse_cs(path):
     src = open(path, encoding="utf-8").read()
     out = set()
-    for g in ["TextExt", "BinaryExt"]:
+    for g in ["TextExt", "BinaryExt", "WebArchiveExt"]:
         m = re.search(g + r"\s*=\s*new HashSet<string>\([^)]*\)\s*\{(.*?)\};", src, re.S)
         if not m:
             print("  !! 未找到 %s" % g)

@@ -7,6 +7,91 @@
 
 ---
 
+## [1.6.7] - 2026-10-22
+
+### 新增
+
+- **`.mhtml` / `.mht` 单文件网页预览**（[#5](https://github.com/mengyuefeitian/quickpreview/issues/5)）
+
+  以前 `.mhtml` 只是被当纯文本读，用户看到的是满屏 MIME 头和 `=3D` 转义字符 ——
+  等于没解析这个格式。现在按 MIME `multipart/related` 真正拆开：
+
+  - 按 `boundary` 切 part，跳过第一个分隔线之前的 preamble（`This is a multi-part message…`）；
+    `boundary` 头被折成多行时按续行规则拼接。
+  - 解出第一个 `text/html` 作主文档：`Content-Transfer-Encoding` 支持 `quoted-printable`
+    （`=XX` 字节 + `=` 接换行的软换行）与 `base64`；`charset` 按声明解码，
+    `gb2312` / `gb18030` / `cp936` 统一归一化为 `gbk`（TextDecoder 里它们就是同一套）。
+  - 其余 part 转成 `data:` URI，同时建立 `cid:<Content-ID>` 与 `Content-Location` 两套索引，
+    把正文里的 `cid:` 引用和绝对地址引用一起替换掉。
+  - 渲染用 `srcdoc` + `sandbox="allow-scripts"`（**不给** `allow-same-origin`）：
+    原页面的脚本能跑，但处于不透明源，读不到父页面，原页面的 CSS 也不会染到预览界面。
+
+- 状态条显示片段数、内联资源数、外链资源数与文件体积。
+
+### 修复
+
+- **解析时把 MIME preamble 当成了一个资源**
+
+  第一个 `boundary` 之前的说明文字（`This is a multi-part message in MIME format.`）被当成
+  一个 part 计进片段数。真实样本的 preamble 是空的，所以一直没暴露；补了合成样本才现形。
+
+- **外链资源数把正文超链接也算进去了**
+
+  原来的统计是数 `https://` 出现次数，一篇满是外链的新闻页会被误报成「部分外链需联网」，
+  实际图片早已全部内联。改为只统计 `img` / `script` / `link` / `source` / `video` / `audio` /
+  `iframe` / `embed` 的 `src|href` 与 CSS `url()` 这类真正会去取的位置。
+
+### 测试
+
+- 新增 `test-samples/dev_mhtml_test.py`：esbuild 把 `mhtml.ts` 打成 CJS 在 node 里跑纯函数，
+  与 Python 标准库 `email` 逐项对照（part 数、doctype、`cid:` 残留、data URI 数、体积、标题解码）。
+  除 Downloads 里的真实样本（24 part / 18 图 / 5 CSS，7 项断言）外，
+  额外现场生成两组合成样本覆盖真实文件没有的分支：`base64 + gb2312 + cid:`、
+  `quoted-printable + Content-Location 绝对地址`。三组共 21 项断言全通过。
+
+- 新增 `test-samples/mhtml_render_probe.cjs` 与 `mhtml_iframe_probe.cjs`：把解析结果落成独立 HTML，
+  分别以「直接打开」与「srcdoc + sandbox iframe」两种方式交给无头 Edge 截图，
+  两张图字节级相同 —— 确认沙箱 iframe 这条链路在真实 Chromium 里渲染效果与直接打开一致。
+
+- 新增 `test-samples/dev_preview_probe.py`：按文件打印一次 `--preview` 期间的全部新日志，
+  用于崩溃现场取证（哪个环节最后一条、之后多久断的）。
+
+- 新增排查钩子 `QP_BROWSER_ARGS`（`MainForm.cs`）：向 WebView2 追加任意 Chromium 参数，
+  与已有的 `QP_DEV_CDP_PORT` 同风格，只在显式设置时生效。
+  本次就是靠它定位到「预览页其实渲染完成了，崩的是浏览器进程」——之前
+  `AdditionalBrowserArguments` 被代码显式赋值，环境变量根本传不进去。
+
+- `test-samples/check_ext_parity.py` 补上 `WEBARCHIVE_EXT` 分组（漏加会误报「只在 FileTypes.cs 里有」），
+  两侧现为 143 个扩展名 + 16 个特殊文件名完全一致。
+
+### 已知限制
+
+- 存档里的资源指向外网且文件内没有对应 part 时，仍按原地址联网取；宿主页面是 `https://app.local`，
+  所以 `http://` 的外链图片会被浏览器按混合内容拦掉（本篇实测样本所有图片均已内联，不受影响）。
+- `.mht` 与 `.mhtml` 视作同一格式；不处理嵌套的 `multipart/alternative` 子包，
+  只取顶层 part（邮件另存的复杂存档可能只显示纯文本分支）。
+- CSS 里的相对 `url()`（背景图、字体）不会跟着内联，会按 `data:` 基准解析而失效；
+  目前只保证正文 `<img>` 与 `<link rel=stylesheet>` 完整。
+
+### 环境说明（非代码问题）
+
+本机是无显卡的虚拟机，WebView2 的 GPU 进程从启动起就在崩溃重启（`GpuProcessExited` exitCode=7），
+最终把浏览器进程一起带走（`BrowserProcessExited` exitCode=0x80000003）。
+写这个版本期间该现象已扩散到 `sample.txt` / `sample.pdf` —— 用未改动的 1.6.6 安装版同样复现，
+故判定为环境噪声而非回归。同一文件交替统计：
+
+| 场景 | 通过率 |
+|---|---|
+| 1.6.7 `sample.png` | 3/5 |
+| 1.6.7 真实 mhtml（1.0MB） | 0/6 |
+| 1.6.6 安装版同一 mhtml（按纯文本渲染） | 1/3 |
+
+`QP_BROWSER_ARGS=--disable-gpu` 实测能让页面正常渲染完成
+（日志：`读取 1026279 字节，耗时 43 ms` → `渲染完成：…（耗时 165 ms）`），
+但崩溃风暴仍在，稳定性没质变。
+
+---
+
 ## [1.6.6] - 2026-10-22
 
 ### 修复

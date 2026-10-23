@@ -4,7 +4,7 @@
 #define MyAppName      "QuickPreview"
 ; 版本号须与 QuickPreview.csproj 的 <Version>、package.json 的 version 保持一致
 ; 规则：修 Bug 第3位+1；含功能第2位+1（打包前确认）；架构变更第1位+1
-#define MyAppVersion   "1.6.6"
+#define MyAppVersion   "1.6.7"
 #define MyAppPublisher "QuickPreview"
 #define MyAppURL       "https://github.com/mengyuefeitian/quickpreview"
 #define MyAppExeName   "QuickPreview.exe"

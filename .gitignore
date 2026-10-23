@@ -34,6 +34,8 @@ test-samples/_*.png
 # ZIP 渲染测试产生的临时打包产物（跑完自动删，防止中途失败残留）
 test-samples/.zip_bundle.cjs
 test-samples/.zip_run.cjs
+test-samples/.mhtml_bundle.cjs
+test-samples/.mhtml_run.cjs
 
 # 系统/编辑器
 Thumbs.db

@@ -213,6 +213,18 @@ async function renderCore(item: FileItem, body: Body, bar: Bar, my: number): Pro
       return;
     }
 
+    if (item.category === 'webarchive') {
+      // 单文件网页（.mhtml / .mht）：拆 MIME 分包 → 资源内联 → 沙箱 iframe 渲染
+      resetScroll(body, false);
+      showLoading(body, '解析单文件网页…');
+      const ab = await loadArrayBuffer(item.path);
+      if (stale(my)) return;
+      const { renderMhtmlView } = await import('./mhtml');
+      if (stale(my)) return;
+      await renderMhtmlView(ab, item, body, bar, { stale: () => stale(my) });
+      return;
+    }
+
     if (item.category === 'audio' || item.category === 'video') {
       resetScroll(body, false);
       showLoading(body, '准备媒体…（ape/mkv 等首次预览会转码，请稍候）');

@@ -61,6 +61,16 @@ namespace QuickPreview
                 ".mp4", ".mkv", ".avi", ".mov", ".webm", ".wmv", ".m4v", ".flv", ".mpg", ".mpeg"
             };
 
+        /// <summary>
+        /// 单文件网页（MHTML / MHT）：一个文件里装着 HTML 与它引用的图片、CSS。
+        /// 不能算纯文本 —— 按文本下发会被当成源码显示，渲染层要自己拆 MIME 分包。
+        /// </summary>
+        private static readonly HashSet<string> WebArchiveExt =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ".mhtml", ".mht"
+            };
+
         /// <summary>没有扩展名、但确定是纯文本的文件名。</summary>
         private static readonly HashSet<string> TextNames =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -99,7 +109,8 @@ namespace QuickPreview
             try
             {
                 var ext = Path.GetExtension(path);
-                if (!string.IsNullOrEmpty(ext) && (TextExt.Contains(ext) || BinaryExt.Contains(ext)))
+                if (!string.IsNullOrEmpty(ext)
+                    && (TextExt.Contains(ext) || BinaryExt.Contains(ext) || WebArchiveExt.Contains(ext)))
                     return true;
 
                 // Dockerfile / Makefile 这类没有扩展名的纯文本
@@ -144,6 +155,7 @@ namespace QuickPreview
             if (ext == ".xls" || ext == ".xlsx" || ext == ".xlsm" || ext == ".csv" || ext == ".tsv") return "Excel";
             if (ext == ".ppt" || ext == ".pptx" || ext == ".pptm") return "PPT";
             if (ext == ".zip") return "压缩包";
+            if (WebArchiveExt.Contains(ext)) return "网页存档";
             if (ext == ".mp3" || ext == ".flac" || ext == ".wav" || ext == ".ape" ||
                 ext == ".ogg" || ext == ".m4a" || ext == ".aac" || ext == ".wma") return "音频";
             if (ext == ".mp4" || ext == ".mkv" || ext == ".avi" || ext == ".mov" ||
@@ -158,6 +170,7 @@ namespace QuickPreview
             try
             {
                 var ext = Path.GetExtension(path);
+                if (WebArchiveExt.Contains(ext)) return "multipart/related";
                 if (Mimes.TryGetValue(ext, out var m)) return m;
 
                 // 代码/配置没有逐个登记 MIME，统一按纯文本下发，

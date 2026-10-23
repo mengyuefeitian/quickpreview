@@ -1039,6 +1039,15 @@ namespace QuickPreview
                             + "（仅 QP_DEV_CDP_PORT 环境变量存在时生效）");
                     }
 
+                    // 排查钩子：QP_BROWSER_ARGS 可追加任意 Chromium 参数（如 --disable-gpu）。
+                    // 只用于定位「某类内容一渲染就整页崩」这类问题，正常使用不设置就没有任何影响。
+                    var extraArgs = Environment.GetEnvironmentVariable("QP_BROWSER_ARGS");
+                    if (!string.IsNullOrWhiteSpace(extraArgs))
+                    {
+                        browserArgs += " " + extraArgs.Trim();
+                        Log.W(LogKind.Web, "【排查模式】追加浏览器参数：" + extraArgs.Trim());
+                    }
+
                     cp.AdditionalBrowserArguments = browserArgs;
                     _web.CreationProperties = cp;
                     Log.I(LogKind.Web, "WebView2 用户数据目录：" + udf);

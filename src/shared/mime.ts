@@ -3,7 +3,8 @@
 // 两边是否漂移由 test-samples/check_ext_parity.py 校验，改完跑一下。
 
 export type Category =
-  | 'image' | 'text' | 'pdf' | 'office' | 'audio' | 'video' | 'folder' | 'archive' | 'unsupported';
+  | 'image' | 'text' | 'pdf' | 'office' | 'audio' | 'video' | 'folder' | 'archive'
+  | 'webarchive' | 'unsupported';
 
 // jfif / jpe 都是 JPEG 的别名扩展名（有的相机/浏览器导出就用 .jfif）
 const IMAGE_EXT = ['png', 'jpg', 'jpeg', 'jpe', 'jfif', 'gif', 'bmp', 'webp', 'tiff', 'tif', 'svg', 'ico', 'avif', 'heic'];
@@ -45,6 +46,10 @@ const VIDEO_EXT = ['mp4', 'mkv', 'avi', 'mov', 'webm', 'wmv', 'flv', 'm4v', 'mpg
 // 压缩包：显示内部文件清单，文本/图片类可直接在包内预览
 const ARCHIVE_EXT = ['zip'];
 
+// 单文件网页（MHTML / MHT）：一个文件里同时装着 HTML 与它引用的图片、CSS，
+// 按文本直接读只会看到 MIME 头与 =3D 转义，必须自己拆包后再渲染。
+const WEBARCHIVE_EXT = ['mhtml', 'mht'];
+
 // 浏览器（Chromium）可直接播放的音频/视频容器+编码
 const AUDIO_PLAYABLE = ['mp3', 'flac', 'wav', 'ogg', 'm4a', 'aac'];
 const VIDEO_PLAYABLE = ['mp4', 'webm', 'mov', 'm4v'];
@@ -58,6 +63,7 @@ const MIME_MAP: Record<string, string> = {
   json: 'application/json', log: 'text/plain', csv: 'text/csv', yaml: 'text/yaml',
   yml: 'text/yaml', xml: 'application/xml', ini: 'text/plain', css: 'text/css',
   js: 'text/javascript', ts: 'text/typescript', html: 'text/html', htm: 'text/html',
+  mhtml: 'multipart/related', mht: 'multipart/related',
   pdf: 'application/pdf',
   mp3: 'audio/mpeg', flac: 'audio/flac', wav: 'audio/wav', ogg: 'audio/ogg',
   m4a: 'audio/mp4', aac: 'audio/aac',
@@ -86,6 +92,7 @@ export function categoryOf(ext: string): Category {
   if (TEXT_EXT.includes(ext)) return 'text';
   if (OFFICE_EXT.includes(ext)) return 'office';
   if (ARCHIVE_EXT.includes(ext)) return 'archive';
+  if (WEBARCHIVE_EXT.includes(ext)) return 'webarchive';
   if (AUDIO_EXT.includes(ext)) return 'audio';
   if (VIDEO_EXT.includes(ext)) return 'video';
   return 'unsupported';
