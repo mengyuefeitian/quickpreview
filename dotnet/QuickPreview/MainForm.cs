@@ -450,6 +450,14 @@ namespace QuickPreview
                         return false;
                     }
 
+                    // 正在重命名 / 在地址栏或搜索框里打字：空格属于输入框与输入法，放行
+                    string why2;
+                    if (TextEntryProbe.IsTextEntryActive(out why2))
+                    {
+                        Log.D(LogKind.Hook, "空格放行（正在输入文字）：" + why2);
+                        return false;
+                    }
+
                     Log.I(LogKind.Hook, "捕获空格键（预览已失焦，前台 class=" + cls2 + "）→ 关闭旧预览并切换到当前选中项");
                     BeginInvoke(new Action(() => HandleSpaceAsync(fg2)));
                     return true;
@@ -461,6 +469,15 @@ namespace QuickPreview
                 if (!ExplorerSelection.IsCandidateClass(cls))
                 {
                     Log.D(LogKind.Hook, "空格放行：前台窗口 class=" + cls + " 不是文件窗口");
+                    return false;
+                }
+
+                // 正在重命名（含用输入法选字）：重命名框就在这个文件窗口里，
+                // 若在这里吞掉空格，输入法永远选不上字、重命名必然失败。必须放行。
+                string why;
+                if (TextEntryProbe.IsTextEntryActive(out why))
+                {
+                    Log.D(LogKind.Hook, "空格放行（正在输入文字）：" + why);
                     return false;
                 }
 
