@@ -36,6 +36,11 @@ test-samples/.zip_bundle.cjs
 test-samples/.zip_run.cjs
 test-samples/.mhtml_bundle.cjs
 test-samples/.mhtml_run.cjs
+test-samples/.ziprange_bundle.cjs
+test-samples/.ziprange_run.cjs
+test-samples/.pdfpass_bundle.cjs
+test-samples/.pdfpass_run.cjs
+test-samples/.pdf_probe.cjs
 
 # 系统/编辑器
 Thumbs.db

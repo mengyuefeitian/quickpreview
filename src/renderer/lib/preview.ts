@@ -205,11 +205,24 @@ async function renderCore(item: FileItem, body: Body, bar: Bar, my: number): Pro
     if (item.category === 'archive') {
       resetScroll(body, true);
       showLoading(body, '解析压缩包…');
-      const ab = await loadArrayBuffer(item.path);
+      const { renderZipView, rangeZipSource, FULL_READ_MAX } = await import('./zip');
       if (stale(my)) return;
-      const { renderZipView } = await import('./zip');
+
+      // 大包绝不整包读进来：1.5GB 会是一个 200 全量响应，一次性塞进 WebView2
+      // 会把浏览器进程打爆、连带宿主一起退出（用户看到的就是"预览压缩包闪退"）。
+      // 超过阈值的包只按区间读中央目录，点开条目时再取单个文件的数据。
+      let input: ArrayBuffer | import('./zip').ZipSource;
+      if (item.size > FULL_READ_MAX) {
+        postToHost({
+          type: 'log',
+          message: `压缩包较大（${item.size} 字节 > ${FULL_READ_MAX}），改为只读中央目录`
+        });
+        input = await rangeZipSource(item.path, item.size);
+      } else {
+        input = await loadArrayBuffer(item.path);
+      }
       if (stale(my)) return;
-      await renderZipView(ab, item.name, body, bar, { stale: () => stale(my) });
+      await renderZipView(input, item.name, body, bar, { stale: () => stale(my) });
       return;
     }
 

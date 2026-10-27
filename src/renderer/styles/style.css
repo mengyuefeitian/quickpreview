@@ -200,6 +200,42 @@ kbd {
 .pdf-prev { left: 10px; }
 .pdf-next { right: 10px; }
 
+/* 加密 PDF 的密码提示层：盖在预览区中央，不进工具栏，避免挤占翻页控件 */
+.pdf-pass {
+  width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+}
+.pdf-pass-card {
+  width: 320px; max-width: 100%; padding: 22px 20px 18px;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 10px 34px rgba(0,0,0,.45); text-align: center;
+}
+.pdf-pass-icon { font-size: 26px; line-height: 1; margin-bottom: 10px; }
+.pdf-pass-title { font-size: 15px; font-weight: 600; }
+.pdf-pass-name {
+  font-size: 12px; color: var(--text-dim); margin-top: 6px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.pdf-pass-input {
+  width: 100%; margin-top: 16px; padding: 9px 12px; font-size: 14px; font-family: inherit;
+  color: var(--text); background: var(--bg-3); border: 1px solid var(--border);
+  border-radius: 6px; outline: none;
+}
+.pdf-pass-input:focus { border-color: var(--accent); }
+.pdf-pass-input:disabled { opacity: .6; }
+.pdf-pass-tip { min-height: 18px; margin-top: 8px; font-size: 12px; color: var(--text-dim); }
+.pdf-pass-tip.err { color: #ff7b72; }
+.pdf-pass-row { display: flex; gap: 10px; margin-top: 6px; }
+.pdf-pass-ok, .pdf-pass-cancel {
+  flex: 1; padding: 8px 0; font-size: 13px; font-family: inherit;
+  border-radius: 6px; cursor: pointer; border: 1px solid var(--border);
+}
+.pdf-pass-ok { background: var(--accent-2); border-color: var(--accent-2); color: #fff; }
+.pdf-pass-ok:hover { background: var(--accent); border-color: var(--accent); }
+.pdf-pass-ok:disabled { opacity: .6; cursor: default; }
+.pdf-pass-cancel { background: var(--bg-3); color: var(--text); }
+.pdf-pass-cancel:hover { background: #3a3a3d; }
+
 /* .doc（OLE2 旧版 Word）：按 Word 页面观感还原（纸张 + 居中标题 + 等宽栅格表格） */
 .doc-page {
   font-family: "宋体", SimSun, serif; line-height: 1.7; color: #000;

@@ -10,6 +10,7 @@
 
 import { postToHost } from './host';
 import { mountZoomControl } from './zoom';
+import { createPasswordPrompt } from './pdfpass';
 
 type PdfJs = typeof import('pdfjs-dist');
 type PdfDoc = any;
@@ -49,6 +50,16 @@ let spreadPref = false;
 // 缩放偏好同样跨文件保持：0 = 适应窗口，>0 = 百分比
 let zoomPref = 0;
 
+/** 把 pdf.js 抛出的异常翻成能直接给用户看的一句话。 */
+function describePdfError(e: any): string {
+  const name = e?.name || '';
+  const msg = e?.message || String(e);
+  if (/已取消输入密码/.test(msg)) return '已取消输入密码';
+  if (name === 'PasswordException') return '密码不正确或未提供密码';
+  if (name === 'InvalidPDFException') return 'PDF 文件已损坏或格式不正确';
+  return msg;
+}
+
 export async function renderPdfViewer(
   buf: ArrayBuffer,
   body: HTMLElement,
@@ -59,7 +70,37 @@ export async function renderPdfViewer(
   const lib = await pdfjs();
   if (stale()) return null;
 
-  const pdf: PdfDoc = await lib.getDocument({ data: buf }).promise;
+  // 加密 PDF：pdf.js 通过 onPassword 要密码，密码错时以 reason=2 再回调一次。
+  // 在拿到密码之前 getDocument().promise 一直挂着 —— 所以提示层必须画在这个 body 上，
+  // 不能等文档打开后再显示。
+  const prompt = createPasswordPrompt(body, opts.name);
+  let loadingTask: any = null;
+  let cancelled = false;
+  let pdf: PdfDoc;
+  try {
+    // 注意：pdf.js 4.x 的 getDocument() 不认 init 里的 onPassword（类型定义和实现都没有），
+    // 必须拿到 loadingTask 之后再赋 `onPassword`。赋早了没用、赋晚了会以
+    // "No password given" 直接 reject —— 这是实测出来的（见 dev_pdf_pass_test.py）。
+    loadingTask = lib.getDocument({ data: buf } as any);
+    loadingTask.onPassword = (updatePassword: (v: string | Error) => void, reason: number) => {
+      void prompt.ask(reason).then((pwd) => {
+        if (pwd == null) {
+          // pdf.js 会把"传 Error"再包一层成 PasswordException("No password given")，
+          // 原始信息丢了，所以取消状态自己记着，抛错时用这句人话。
+          cancelled = true;
+          updatePassword(new Error('已取消输入密码'));
+        } else {
+          updatePassword(pwd);
+        }
+      });
+    };
+    pdf = await loadingTask.promise;
+  } catch (e: any) {
+    prompt.dispose();
+    try { loadingTask?.destroy(); } catch { /* 已经废了 */ }
+    throw new Error(cancelled ? '已取消输入密码' : describePdfError(e));
+  }
+  prompt.dispose();
   if (stale()) { try { pdf.destroy(); } catch { } return null; }
 
   const pageCount: number = pdf.numPages || 0;

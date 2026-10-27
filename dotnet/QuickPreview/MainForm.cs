@@ -37,6 +37,14 @@ namespace QuickPreview
         /// 播放器首包固定发 `Range: bytes=0-`，原样回整个文件会把 WebView2 浏览器进程顶爆。
         /// </summary>
         private const long MaxRangeChunk = 8L * 1024 * 1024;
+
+        /// <summary>
+        /// 不带 Range 的 200 全量响应上限（256MB）。超过直接 413。
+        /// 1.5GB 的 200 响应体会把浏览器进程打爆、连带宿主抛 SEHException 退出；
+        /// 能走到这条的只有"页面自己要整份"的格式（docx/pdf/zip/图片），
+        /// 它们正常都远小于这个量级，真超了宁可视窗报错也不能让程序消失。
+        /// </summary>
+        private const long MaxFullBody = 256L * 1024 * 1024;
         private const int VK_SPACE = 0x20;
         private const int HeartbeatMs = 30000;          // 心跳间隔（同时用于钩子存活检查）
 
@@ -1189,12 +1197,33 @@ namespace QuickPreview
                 string range = null;
                 try { range = e.Request.Headers.GetHeader("Range"); } catch { }
 
+                // 页面侧按区间读（大压缩包的中央目录、包内单文件）走查询参数：
+                // 自定义/非简单 Range 请求头会触发 CORS 预检，而这里没有 OPTIONS 分支，
+                // 预检一失败整条通道就废了。查询参数不产生预检。
+                if (string.IsNullOrEmpty(range))
+                {
+                    var rq = QueryParam(uri, "r");
+                    if (!string.IsNullOrEmpty(rq)) range = "bytes=" + rq;
+                }
+
                 // 区间解析 + 单次分块上限，全部交给 FileRange（纯函数，有独立断言用例）
                 RangeSpec rs = FileRange.Resolve(range, total, MaxRangeChunk);
                 long start = rs.Start;
                 long end = rs.End;
                 string contentRange = rs.ContentRange;
                 long len = rs.Length;
+
+                // 兜底：没有任何区间请求却要整份回传、且文件大到会撑爆浏览器进程时，直接拒绝。
+                // 预览侧已经不会再对大文件发全量请求，这条只是防止将来某条路径重犯。
+                if (rs.Status == 200 && total > MaxFullBody)
+                {
+                    Log.E(LogKind.Media, string.Format(
+                        "拒绝 200 全量回传：{0:N0} 字节超过 {1:N0} 上限（{2}）",
+                        total, MaxFullBody, Path.GetFileName(p)));
+                    Respond(e, 413, "Payload Too Large", Encoding.UTF8.GetBytes("文件过大，请使用区间读取"),
+                        "Content-Type: text/plain; charset=utf-8\r\nAccess-Control-Allow-Origin: *");
+                    return;
+                }
 
                 var headers = new StringBuilder();
                 headers.Append($"Content-Type: {mime}").Append("\r\n");
