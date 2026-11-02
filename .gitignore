@@ -41,6 +41,12 @@ test-samples/.ziprange_run.cjs
 test-samples/.pdfpass_bundle.cjs
 test-samples/.pdfpass_run.cjs
 test-samples/.pdf_probe.cjs
+# RAR 结构测试：临时打包产物 + 自造样本（样本由 make_rar_samples.py 生成）
+test-samples/.rar_bundle.cjs
+test-samples/.rar_run.cjs
+test-samples/.rarui_bundle.cjs
+test-samples/.rarui_run.cjs
+test-samples/qp_rar*.rar
 
 # 系统/编辑器
 Thumbs.db

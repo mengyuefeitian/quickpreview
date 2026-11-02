@@ -205,24 +205,35 @@ async function renderCore(item: FileItem, body: Body, bar: Bar, my: number): Pro
     if (item.category === 'archive') {
       resetScroll(body, true);
       showLoading(body, '解析压缩包…');
-      const { renderZipView, rangeZipSource, FULL_READ_MAX } = await import('./zip');
+      const mod = await import('./zip');
       if (stale(my)) return;
+
+      // RAR 与 ZIP 的读法完全不同（RAR 没有中央目录，只能顺序走块头），
+      // 但两者共用同一套清单界面，所以只在这里分派数据源。
+      const isRar = /\.rar$/i.test(item.path);
+      const FULL_READ_MAX = mod.FULL_READ_MAX;
 
       // 大包绝不整包读进来：1.5GB 会是一个 200 全量响应，一次性塞进 WebView2
       // 会把浏览器进程打爆、连带宿主一起退出（用户看到的就是"预览压缩包闪退"）。
-      // 超过阈值的包只按区间读中央目录，点开条目时再取单个文件的数据。
+      // 超过阈值的包只按区间读索引，点开条目时再取单个文件的数据。
       let input: ArrayBuffer | import('./zip').ZipSource;
       if (item.size > FULL_READ_MAX) {
         postToHost({
           type: 'log',
-          message: `压缩包较大（${item.size} 字节 > ${FULL_READ_MAX}），改为只读中央目录`
+          message: `压缩包较大（${item.size} 字节 > ${FULL_READ_MAX}），改为只按区间读索引`
         });
-        input = await rangeZipSource(item.path, item.size);
+        input = isRar
+          ? await mod.rangeRarSource(item.path, item.size)
+          : await mod.rangeZipSource(item.path, item.size);
       } else {
-        input = await loadArrayBuffer(item.path);
+        const ab = await loadArrayBuffer(item.path);
+        input = isRar ? await mod.bufferRarSource(ab, item.name) : ab;
       }
       if (stale(my)) return;
-      await renderZipView(input, item.name, body, bar, { stale: () => stale(my) });
+      await mod.renderZipView(input, item.name, body, bar, {
+        stale: () => stale(my),
+        format: isRar ? 'rar' : 'zip'
+      });
       return;
     }
 

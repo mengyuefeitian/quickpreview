@@ -53,8 +53,8 @@ namespace QuickPreview
                 ".pdf",
                 ".doc", ".docx", ".docm", ".xls", ".xlsx", ".xlsm", ".csv", ".tsv",
                 ".ppt", ".pptx", ".pptm",
-                // 压缩包（zip）
-                ".zip",
+                // 压缩包（zip / rar）
+                ".zip", ".rar",
                 // 音频
                 ".mp3", ".flac", ".wav", ".ape", ".ogg", ".m4a", ".aac", ".wma",
                 // 视频
@@ -95,7 +95,7 @@ namespace QuickPreview
                 [".xml"] = "application/xml", [".csv"] = "text/csv; charset=utf-8",
                 [".tsv"] = "text/tab-separated-values; charset=utf-8",
                 [".pdf"] = "application/pdf",
-                [".zip"] = "application/zip",
+                [".zip"] = "application/zip", [".rar"] = "application/vnd.rar",
                 [".mp3"] = "audio/mpeg", [".flac"] = "audio/flac", [".wav"] = "audio/wav",
                 [".ape"] = "audio/x-ape", [".ogg"] = "audio/ogg", [".m4a"] = "audio/mp4",
                 [".aac"] = "audio/aac", [".wma"] = "audio/x-ms-wma",
@@ -154,7 +154,7 @@ namespace QuickPreview
             if (ext == ".doc" || ext == ".docx" || ext == ".docm") return "Word";
             if (ext == ".xls" || ext == ".xlsx" || ext == ".xlsm" || ext == ".csv" || ext == ".tsv") return "Excel";
             if (ext == ".ppt" || ext == ".pptx" || ext == ".pptm") return "PPT";
-            if (ext == ".zip") return "压缩包";
+            if (ext == ".zip" || ext == ".rar") return "压缩包";
             if (WebArchiveExt.Contains(ext)) return "网页存档";
             if (ext == ".mp3" || ext == ".flac" || ext == ".wav" || ext == ".ape" ||
                 ext == ".ogg" || ext == ".m4a" || ext == ".aac" || ext == ".wma") return "音频";

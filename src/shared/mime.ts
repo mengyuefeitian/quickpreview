@@ -44,7 +44,8 @@ const OFFICE_EXT = ['docx', 'xlsx', 'pptx', 'xls', 'csv', 'tsv', 'doc', 'ppt', '
 const AUDIO_EXT = ['mp3', 'flac', 'wav', 'ape', 'ogg', 'm4a', 'aac', 'wma'];
 const VIDEO_EXT = ['mp4', 'mkv', 'avi', 'mov', 'webm', 'wmv', 'flv', 'm4v', 'mpg', 'mpeg'];
 // 压缩包：显示内部文件清单，文本/图片类可直接在包内预览
-const ARCHIVE_EXT = ['zip'];
+// rar 只支持列清单 + 读「存储」方式的条目（RAR 压缩算法浏览器侧没有解压器）
+const ARCHIVE_EXT = ['zip', 'rar'];
 
 // 单文件网页（MHTML / MHT）：一个文件里同时装着 HTML 与它引用的图片、CSS，
 // 按文本直接读只会看到 MIME 头与 =3D 转义，必须自己拆包后再渲染。

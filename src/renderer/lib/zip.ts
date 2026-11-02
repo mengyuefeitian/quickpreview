@@ -22,6 +22,10 @@ import {
   readZipDirectoryByRange, extractEntryByRange,
   type ZipDirEntry, type RangeRead
 } from './zipdir';
+import {
+  readRarDirectory, readRarDirectoryByRange, rarMethodLabel, RAR_ENTRY_READ_MAX,
+  type RarDir, type RangeRead as RarRangeRead
+} from './rardir';
 
 /** 内存里整包解析的上限。超过就走区间索引，只读中央目录。 */
 export const FULL_READ_MAX = 64 * 1024 * 1024;
@@ -88,6 +92,8 @@ export interface ZipSource {
 
 export interface ZipViewOptions {
   stale: () => boolean;
+  /** 顶部状态栏显示用的格式名（ZIP / RAR），默认 ZIP */
+  format?: 'zip' | 'rar';
 }
 
 /** 把中央目录条目整理成「文件列表 + 目录集合」。很多工具不写目录条目，目录要按路径推导。 */
@@ -230,6 +236,128 @@ export async function rangeZipSource(path: string, size: number): Promise<ZipSou
   };
 }
 
+// ---------------- RAR ----------------
+//
+// RAR 和 ZIP 的结构差异决定了这里只能换一套读法：
+//   · 没有尾部中央目录，只能从头把块头一个个走完（块头里带 dataSize，数据区整块跳过）；
+//   · 压缩算法是专有格式，浏览器侧没有解压器 ⇒ 只有 method=0（存储）的条目能直接读内容。
+// 界面完全复用 ZIP 的列表：清单、搜索、点击预览都一样，只是内容大多只能给提示。
+
+/** RAR 条目 → 列表条目。锁定原因与 ZIP 不同：不是"算法不认识"，而是"浏览器没有 RAR 解压器"。 */
+function rarEntriesOf(dir: RarDir): { entries: ZipEntry[]; dirs: Set<string> } {
+  const entries: ZipEntry[] = [];
+  const dirs = new Set<string>();
+
+  for (const e of dir.entries) {
+    if (e.dir) { dirs.add(e.path); continue; }
+    const parts = e.path.split('/');
+    for (let i = 1; i < parts.length; i++) dirs.add(parts.slice(0, i).join('/'));
+    const locked = e.encrypted || e.method !== 0;
+    entries.push({
+      path: e.path,
+      size: e.size,
+      compressed: e.compressed,
+      date: e.date,
+      locked,
+      lockReason: e.encrypted
+        ? '该文件已加密，需要密码才能解压'
+        : `该文件使用 ${rarMethodLabel(e.method)}，需解压后查看`,
+      offset: e.dataOffset,
+      method: e.method
+    });
+  }
+
+  entries.sort((a, b) => a.path.localeCompare(b.path, 'zh-CN'));
+  return { entries, dirs };
+}
+
+function rarNotice(dir: RarDir, locked: number, indexOnly = false): string {
+  if (dir.encryptedHeaders) return '🔒 该压缩包对文件名也做了加密，无法列出清单 —— 请用压缩软件输入密码后查看。';
+  const big = indexOnly ? '📦 压缩包较大，已按需读取块头索引（未整包载入内存）。' : '';
+  if (dir.truncated) return '📦 压缩包条目过多，清单只列出了前面一部分。';
+  if (locked === 0) return big;
+  return '📦 RAR 是专有压缩格式，浏览器无法在包内解压 —— 下面仍列出完整清单；'
+    + '以「存储」方式打包的文件可直接查看内容，其余请解压后用默认程序打开。'
+    + (indexOnly ? '（大包已按需读取，未整包载入）' : '');
+}
+
+/** 小 RAR：整包在内存里，顺序走完块头。 */
+export async function bufferRarSource(ab: ArrayBuffer, name: string): Promise<ZipSource> {
+  const dir = await readRarDirectory(ab);
+  const { entries, dirs } = rarEntriesOf(dir);
+  const bytes = new Uint8Array(ab);
+  const locked = entries.reduce((n, e) => n + (e.locked ? 1 : 0), 0);
+
+  postToHost({
+    type: 'log',
+    message: `RAR 解析完成：${name}（${dir.format}，${entries.length} 个文件，`
+      + `锁 ${locked} 个${dir.encryptedHeaders ? '，包头加密' : ''}）`
+  });
+
+  return {
+    archiveSize: ab.byteLength,
+    entries,
+    dirs,
+    indexOnly: false,
+    notice: rarNotice(dir, locked),
+    read: async (e) => {
+      if (e.locked) throw new Error(e.lockReason);
+      if (e.compressed > RAR_ENTRY_READ_MAX) {
+        throw new Error(`单个文件过大（${Math.round(e.compressed / 1048576)} MB），不适合在预览里打开`);
+      }
+      return bytes.slice(e.offset, e.offset + e.compressed).buffer as ArrayBuffer;
+    }
+  };
+}
+
+/**
+ * 大 RAR：只按区间读块头，绝不整包载入。
+ * @param path 绝对路径（走宿主 __local 通道）
+ * @param size 文件大小；宿主单次 206 响应上限 8MB，窗口取 256KB 足够
+ */
+export async function rangeRarSource(path: string, size: number): Promise<ZipSource> {
+  const url = appLocalUrl(path);
+
+  const read: RarRangeRead = async (start, end) => {
+    // 与 ZIP 相同：区间用查询参数，不用 Range 请求头（自定义头会触发 CORS 预检）
+    const res = await fetch(url + '&r=' + start + '-' + end);
+    if (!res.ok) throw new Error('读取压缩包失败：HTTP ' + res.status);
+    const ab = await res.arrayBuffer();
+    const want = end - start + 1;
+    if (ab.byteLength !== want) {
+      throw new Error(`区间读取长度不符（期望 ${want}，实际 ${ab.byteLength} 字节）`);
+    }
+    return new Uint8Array(ab);
+  };
+
+  const t0 = Date.now();
+  const dir = await readRarDirectoryByRange(size, read);
+  const { entries, dirs } = rarEntriesOf(dir);
+  const locked = entries.reduce((n, e) => n + (e.locked ? 1 : 0), 0);
+
+  postToHost({
+    type: 'log',
+    message: `RAR 大包走区间索引：${entries.length} 个文件，${Date.now() - t0} ms（未整包读取）`
+  });
+
+  return {
+    archiveSize: size,
+    entries,
+    dirs,
+    indexOnly: true,
+    notice: rarNotice(dir, locked, true),
+    read: async (e) => {
+      if (e.locked) throw new Error(e.lockReason);
+      if (e.compressed <= 0) return new ArrayBuffer(0);
+      if (e.compressed > RAR_ENTRY_READ_MAX) {
+        throw new Error(`单个文件过大（${Math.round(e.compressed / 1048576)} MB），不适合在预览里打开`);
+      }
+      const raw = await read(e.offset, e.offset + e.compressed - 1);
+      return raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength) as ArrayBuffer;
+    }
+  };
+}
+
 export async function renderZipView(
   input: ArrayBuffer | ZipSource,
   name: string,
@@ -301,7 +429,7 @@ export async function renderZipView(
   body.appendChild(view);
   bar.innerHTML = '';
   bar.appendChild(el('span', 'pb-name', name));
-  bar.appendChild(el('span', '', `ZIP · ${entries.length} 个文件 · 解压后 ${humanSize(totalSize)}`));
+  bar.appendChild(el('span', '', `${(opts.format || 'zip').toUpperCase()} · ${entries.length} 个文件 · 解压后 ${humanSize(totalSize)}`));
 
   const dt = (d: Date | null): string => {
     if (!d) return '';
@@ -432,7 +560,7 @@ export async function renderZipView(
 
   postToHost({
     type: 'log',
-    message: `ZIP 解析完成：${name}（${entries.length} 个文件，${dirCount} 个目录，`
+    message: `${(opts.format || 'zip').toUpperCase()} 解析完成：${name}（${entries.length} 个文件，${dirCount} 个目录，`
       + `解压后 ${humanSize(totalSize)}${src.indexOnly ? '，索引模式' : ''}）`
   });
 }

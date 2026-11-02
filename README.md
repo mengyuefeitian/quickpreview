@@ -39,7 +39,7 @@ QuickPreview 只做一件事：**接管空格键**。它在后台常驻，监听
 - **PDF** — 单页或双页横向翻页，等比缩放；矢量文字不糊。
 - **媒体直接播** — 浏览器不支持的封装（`mkv` `avi` `wmv` `ape` 等）用内置 ffmpeg 按需转码，结果缓存，第二次秒开。
 - **网页存档** — `.mhtml` / `.mht` 按 MIME 分包拆开，图片与 CSS 内联后还原成原页面，断网也能看。
-- **顺手的小功能** — 文件夹显示文件数与体积；`zip` 列出条目并可直接预览包内图片和文本；超大文本分块加载。
+- **顺手的小功能** — 文件夹显示文件数与体积；`zip` / `rar` 列出条目并可预览包内图片和文本（RAR 里以「存储」方式打包的条目）；超大文本分块加载。
 
 ## 支持格式
 
@@ -51,11 +51,13 @@ QuickPreview 只做一件事：**接管空格键**。它在后台常驻，监听
 | Word    | `docx` `docm` `doc`                                                                                                                                                     |
 | Excel   | `xlsx` `xlsm` `xls` `csv` `tsv`                                                                                                                                         |
 | PPT     | `pptx` `pptm`                                                                                                                                                           |
-| 压缩包     | `zip`                                                                                                                                                                   |
+| 压缩包     | `zip` `rar`                                                                                                                                                             |
 | 网页存档    | `mhtml` `mht`                                                                                                                                                           |
 | 音频      | `mp3` `flac` `wav` `ape` `ogg` `m4a` `aac` `wma`                                                                                                                        |
 | 视频      | `mp4` `mkv` `avi` `mov` `webm` `wmv` `flv` `m4v` `mpg` `mpeg`                                                                                                           |
 | 文件夹     | 目录（文件数 / 体积统计）                                                                                                                                                          |
+
+RAR 没有中央目录、压缩算法也是专有格式，所以只做结构读取：完整列出清单，`存储` 方式的条目可直接看内容，压缩条目提示解压后查看（`.rar` 的 RAR5 / RAR4 都支持）。
 
 关于旧格式：`.doc` 是 Word 97-2003 的 OLE2 二进制，内置 CFB + piece table 解析器直接读正文。该格式不保存版式信息，因此呈现为纯文本加段落结构。`.ppt` 目前不支持——纯前端没有可用的二进制解析器，预览时会提示另存为 `.pptx`。
 
@@ -141,7 +143,7 @@ npm run dev:app     # 终端 2
                    ffmpeg 转码 MediaTranscode.cs ◀── 页面请求 prepareMedia
 ```
 
-宿主层是 C# / .NET 8 WinForms，负责钩子、窗口、托盘、文件服务与转码；渲染层是 TypeScript + Vite，跑在 WebView2 里，按文件类型分派到各自的渲染器（`docxview.ts` / `pptx.ts` / `pdfview.ts` / `doc.ts` / `zip.ts` / `mhtml.ts` / `text.ts`）。
+宿主层是 C# / .NET 8 WinForms，负责钩子、窗口、托盘、文件服务与转码；渲染层是 TypeScript + Vite，跑在 WebView2 里，按文件类型分派到各自的渲染器（`docxview.ts` / `pptx.ts` / `pdfview.ts` / `doc.ts` / `zip.ts` / `rardir.ts` / `mhtml.ts` / `text.ts`）。
 
 <details>
 
@@ -220,7 +222,7 @@ Windows 的防抢焦点机制会把非前台进程的弹窗压到当前前台窗
 - [ ] 安装包代码签名，消除 SmartScreen 提示
 - [ ] 预览窗口内搜索（文本 / Word / PDF）
 - [ ] 表格类文件的单元格选区复制
-- [ ] 更多压缩包格式：`7z`、`rar`
+- [ ] 更多压缩包格式：`7z`
 - [ ] 电子书：`epub`
 - [ ] 自定义快捷键与「单击即预览」模式
 
