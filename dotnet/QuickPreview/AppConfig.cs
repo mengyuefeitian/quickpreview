@@ -19,6 +19,20 @@ namespace QuickPreview
             public int WindowY { get; set; } = int.MinValue;
             public int WindowWidth { get; set; }
             public int WindowHeight { get; set; }
+
+            // ---------- 自动更新 ----------
+            /// <summary>定时自动检查更新（托盘菜单可关）。</summary>
+            public bool AutoUpdate { get; set; } = true;
+            /// <summary>自动检查间隔（小时）。0 表示只在启动时查一次。</summary>
+            public int UpdateIntervalHours { get; set; } = 6;
+            /// <summary>上次检查时间（UTC）。</summary>
+            public DateTime LastUpdateCheckUtc { get; set; } = DateTime.MinValue;
+            /// <summary>用户点了"跳过此版本"的版本号，不再提示该版本。</summary>
+            public string SkipVersion { get; set; } = "";
+            /// <summary>用户点了"稍后提醒"的截止时间（UTC）。</summary>
+            public DateTime SnoozeUntilUtc { get; set; } = DateTime.MinValue;
+            /// <summary>上次成功更新到的版本，用于重启后提示"已更新"。</summary>
+            public string LastUpdatedVersion { get; set; } = "";
         }
 
         private const int MinWidth = 640;
@@ -113,6 +127,12 @@ namespace QuickPreview
             d.WindowWidth = b.Width;
             d.WindowHeight = b.Height;
 
+            Save();
+        }
+
+        private static void Save()
+        {
+            var d = Current;
             try
             {
                 Directory.CreateDirectory(Dir);
@@ -124,11 +144,94 @@ namespace QuickPreview
             }
             catch (Exception ex)
             {
-                Log.W(LogKind.App, "保存窗口位置失败：" + ex.Message);
+                Log.W(LogKind.App, "保存配置失败：" + ex.Message);
             }
         }
 
         public const int MinimumWidth = MinWidth;
         public const int MinimumHeight = MinHeight;
+
+        // ---------- 自动更新偏好 ----------
+        // 说明：这里只做"读写偏好"与"该不该打扰用户"的判断，
+        // 联网逻辑全部在 UpdateService，便于脱离 UI 单独回归。
+
+        /// <summary>是否定时自动检查更新。</summary>
+        public static bool AutoUpdate
+        {
+            get { return Current.AutoUpdate; }
+            set
+            {
+                if (Current.AutoUpdate == value) return;
+                Current.AutoUpdate = value;
+                Save();
+            }
+        }
+
+        /// <summary>自动检查间隔（小时），至少 1 小时，避免把 GitHub 接口打爆。</summary>
+        public static int UpdateIntervalHours
+        {
+            get { return Math.Max(1, Current.UpdateIntervalHours); }
+        }
+
+        public static DateTime LastUpdateCheckUtc
+        {
+            get { return Current.LastUpdateCheckUtc; }
+        }
+
+        public static string SkipVersion
+        {
+            get { return Current.SkipVersion ?? ""; }
+        }
+
+        public static void MarkUpdateChecked()
+        {
+            Current.LastUpdateCheckUtc = DateTime.UtcNow;
+            Save();
+        }
+
+        /// <summary>是否到了该自动检查的时间。</summary>
+        public static bool UpdateCheckDue()
+        {
+            var last = Current.LastUpdateCheckUtc;
+            if (last == DateTime.MinValue) return true;      // 装完从没查过
+            var hours = (DateTime.UtcNow - last).TotalHours;
+            return hours >= UpdateIntervalHours;
+        }
+
+        /// <summary>自动检查时是否应该"不打扰"：用户跳过过该版本，或按了稍后提醒。</summary>
+        public static bool ShouldSuppressUpdate(string version)
+        {
+            if (string.IsNullOrEmpty(version)) return false;
+            if (string.Equals(Current.SkipVersion, version, StringComparison.OrdinalIgnoreCase)) return true;
+
+            var until = Current.SnoozeUntilUtc;
+            return until != DateTime.MinValue && DateTime.UtcNow < until;
+        }
+
+        /// <summary>跳过某个版本（该版本不再自动提示，手动检查仍会显示）。</summary>
+        public static void SkipUpdateVersion(string version)
+        {
+            Current.SkipVersion = version ?? "";
+            Current.SnoozeUntilUtc = DateTime.MinValue;
+            Save();
+        }
+
+        /// <summary>稍后提醒（小时）。</summary>
+        public static void SnoozeUpdate(int hours)
+        {
+            Current.SnoozeUntilUtc = DateTime.UtcNow.AddHours(Math.Max(1, hours));
+            Save();
+        }
+
+        public static string LastUpdatedVersion
+        {
+            get { return Current.LastUpdatedVersion ?? ""; }
+        }
+
+        public static void SetLastUpdatedVersion(string version)
+        {
+            Current.LastUpdatedVersion = version ?? "";
+            Save();
+        }
     }
 }

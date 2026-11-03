@@ -4,7 +4,7 @@
 #define MyAppName      "QuickPreview"
 ; 版本号须与 QuickPreview.csproj 的 <Version>、package.json 的 version 保持一致
 ; 规则：修 Bug 第3位+1；含功能第2位+1（打包前确认）；架构变更第1位+1
-#define MyAppVersion   "1.8.0"
+#define MyAppVersion   "1.9.0"
 #define MyAppPublisher "QuickPreview"
 #define MyAppURL       "https://github.com/mengyuefeitian/quickpreview"
 #define MyAppExeName   "QuickPreview.exe"
@@ -91,6 +91,15 @@ Filename: "{tmp}\MicrosoftEdgeWebview2Setup.exe"; Parameters: "/silent /install"
 Filename: "{win}\explorer.exe"; Parameters: """{app}\{#MyAppExeName}"""; \
     Description: "立即启动 {#MyAppName}"; Flags: nowait postinstall skipifsilent
 
+; ---------- 自动更新（静默安装）后重新拉起 ----------
+; 应用内点「立即更新」时传 /relaunch=1：装完自动把程序启动回来，并带 --updated
+; 让新实例提示「已更新到 vX.Y.Z」。带 Check 判断，所以交互式安装不会被重复拉起
+; （那条走上面的 postinstall 复选框）。
+; runasoriginaluser：即使用户用管理员权限跑了安装包，重启后的程序也必须回到普通
+; 完整性级别，否则读不到资源管理器选中项（与上面 explorer.exe 那条同一个原因）。
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--updated"; \
+    Check: ShouldRelaunchAfterUpdate; Flags: nowait runasoriginaluser
+
 ; ---------- 覆盖安装前的清理 ----------
 ; webroot\assets 下的文件名带内容哈希（index-Di17XQGm.js 之类），每次构建都会变。
 ; Inno 的升级安装不会主动删除"新版本已不包含"的旧文件，反复覆盖安装后该目录会无限堆积
@@ -120,6 +129,13 @@ const
 function AppIsRunning(): Boolean;
 begin
   Result := CheckForMutexes(MutexName);
+end;
+
+// 自动更新：只有带 /relaunch=1 的静默安装才自动重启程序。
+// 交互式安装走 [Run] 里那条 postinstall 复选框，不会重复启动两个实例。
+function ShouldRelaunchAfterUpdate(): Boolean;
+begin
+  Result := ExpandConstant('{param:relaunch|0}') = '1';
 end;
 
 // 强制结束正在运行的 QuickPreview。

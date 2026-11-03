@@ -1,5 +1,7 @@
 using System;
+using System.IO;
 using System.Security.Principal;
+using System.Text.Json;
 using System.Threading;
 using System.Windows.Forms;
 
@@ -18,9 +20,30 @@ namespace QuickPreview
         /// <summary>当前进程是否以管理员（高完整性级别）运行。</summary>
         internal static bool IsElevated;
 
+        /// <summary>本次是否"刚被更新后重新拉起"（setup.iss 装完会带 --updated 启动）。</summary>
+        internal static bool StartedAfterUpdate;
+
         [STAThread]
         static void Main()
         {
+            // 更新自检入口（排查/回归用）：不建托盘、不挂键盘钩子，跑完退出并写出 JSON 结果。
+            // 必须放在单实例互斥体之前，否则主实例在跑时这里会被"已在运行"挡掉。
+            if (HasFlag("--check-update"))
+            {
+                RunUpdateCheckCli();
+                return;
+            }
+
+            // 无人值守更新（排查/回归用）：检查 → 下载 → 校验 → 静默安装 → 退出，
+            // 由安装程序负责覆盖文件并重新拉起。正常用户走托盘/自动提示，不会用到这条。
+            if (HasFlag("--update-now"))
+            {
+                RunUpdateNowCli();
+                return;
+            }
+
+            StartedAfterUpdate = HasFlag("--updated");
+
             bool createdNew;
             _mutex = new Mutex(true, SingleInstanceMutex, out createdNew);
             if (!createdNew)
@@ -163,6 +186,131 @@ namespace QuickPreview
             }
             catch { }
             return false;
+        }
+
+        /// <summary>
+        /// 命令行检查更新（排查/回归用）：把结果写成 JSON 到 logs\update_check.json 供断言。
+        /// 退出码：0 = 检查成功（有没有新版本都算成功），2 = 检查失败。
+        /// </summary>
+        private static void RunUpdateCheckCli()
+        {
+            int code = 2;
+            try
+            {
+                Log.I(LogKind.Update, "==== CLI 检查更新（v" + AppVersion.Current + "）====");
+                var r = UpdateService.CheckAsync(AppVersion.Current, CancellationToken.None)
+                    .GetAwaiter().GetResult();
+
+                var info = r.Info;
+                var payload = new
+                {
+                    current = AppVersion.Current,
+                    installed = UpdateService.IsInstalledCopy(),
+                    ok = r.Ok,
+                    newer = r.NewerAvailable,
+                    message = r.Message,
+                    version = info != null ? info.Version : "",
+                    assetName = info != null ? info.AssetName : "",
+                    assetUrl = info != null ? info.AssetUrl : "",
+                    assetSize = info != null ? info.AssetSize : 0,
+                    sha256 = info != null ? info.AssetSha256 : "",
+                    htmlUrl = info != null ? info.HtmlUrl : ""
+                };
+
+                var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true });
+                try
+                {
+                    Directory.CreateDirectory(Log.LogDir);
+                    File.WriteAllText(Path.Combine(Log.LogDir, "update_check.json"), json);
+                }
+                catch (Exception ex)
+                {
+                    Log.W(LogKind.Update, "写更新结果文件失败：" + ex.Message);
+                }
+
+                Log.I(LogKind.Update, "CLI 检查结果：" + json.Replace("\r", " ").Replace("\n", " "));
+                code = r.Ok ? 0 : 2;
+            }
+            catch (Exception ex)
+            {
+                Log.E(LogKind.Update, "CLI 检查更新异常", ex);
+            }
+            finally
+            {
+                Log.Shutdown();
+            }
+            Environment.ExitCode = code;
+        }
+
+        /// <summary>
+        /// 无人值守更新（排查/回归用）：检查 → 下载 → 校验 → 启动静默安装 → 退出。
+        /// 安装程序会覆盖文件并带 --updated 重新拉起，所以本进程退出即是"交接点"。
+        /// 结果写 logs\update_apply.json，退出码 0=已交接给安装程序 2=失败。
+        /// </summary>
+        private static void RunUpdateNowCli()
+        {
+            int code = 2;
+            string stage = "check";
+            string detail = "";
+            try
+            {
+                Log.I(LogKind.Update, "==== CLI 执行更新（当前 v" + AppVersion.Current + "）====");
+
+                var r = UpdateService.CheckAsync(AppVersion.Current, CancellationToken.None)
+                    .GetAwaiter().GetResult();
+                if (!r.Ok) throw new InvalidOperationException("检查更新失败：" + r.Message);
+                if (!r.NewerAvailable)
+                {
+                    stage = "done";
+                    detail = r.Message;
+                    Log.I(LogKind.Update, "CLI 更新：没有新版本 —— " + r.Message);
+                    WriteApplyResult(true, stage, detail);
+                    code = 0;
+                    return;
+                }
+
+                stage = "download";
+                var path = UpdateService.DownloadAsync(r.Info, null, CancellationToken.None)
+                    .GetAwaiter().GetResult();
+                UpdateService.CleanupOldDownloads(path);
+
+                stage = "install";
+                // 先落结果文件再启动安装：安装程序 InitializeSetup 会 taskkill 本进程，
+                // 若等到"启动完再写"，很可能写不进去（进程已被结束）。
+                WriteApplyResult(true, stage, path);
+                UpdateService.RunInstaller(path);
+                code = 0;
+                detail = path;
+            }
+            catch (Exception ex)
+            {
+                Log.E(LogKind.Update, "CLI 更新失败（阶段：" + stage + "）", ex);
+                detail = ex.Message;
+                WriteApplyResult(false, stage, detail);
+            }
+            finally
+            {
+                Log.Shutdown();
+            }
+            Environment.ExitCode = code;
+        }
+
+        /// <summary>无人值守更新的结果文件，供回归脚本断言。</summary>
+        private static void WriteApplyResult(bool ok, string stage, string detail)
+        {
+            try
+            {
+                var json = JsonSerializer.Serialize(new
+                {
+                    ok = ok,
+                    stage = stage,
+                    detail = detail,
+                    current = AppVersion.Current
+                }, new JsonSerializerOptions { WriteIndented = true });
+                Directory.CreateDirectory(Log.LogDir);
+                File.WriteAllText(Path.Combine(Log.LogDir, "update_apply.json"), json);
+            }
+            catch { }
         }
 
         private static void LogStartup()

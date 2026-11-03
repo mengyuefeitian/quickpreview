@@ -21,6 +21,8 @@ namespace QuickPreview
         Media,
         /// <summary>WebView2 与 JS 桥接消息</summary>
         Web,
+        /// <summary>检查更新、下载、校验、静默安装</summary>
+        Update,
         /// <summary>错误集中记录（其余类别的 Error 也会在此留一份）</summary>
         Error
     }

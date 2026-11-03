@@ -112,6 +112,14 @@ namespace QuickPreview
         private AboutForm _about;
         private int _heartbeatCount;
 
+        // ---------- 自动更新 ----------
+        // _updateTimer 每 30 分钟醒一次，真正决定"要不要查"的是 AppConfig.UpdateCheckDue()：
+        // 定时器只负责"醒过来看看"，间隔改动不需要重建定时器。
+        private readonly System.Windows.Forms.Timer _updateTimer
+            = new System.Windows.Forms.Timer { Interval = 30 * 60 * 1000 };
+        private UpdateForm _updateForm;
+        private bool _updateChecking;             // 同一时刻只允许一个检查在跑
+
         private bool _coreReady;
         private bool _webInitStarted;     // WebView2 初始化已发起（防重复初始化）
         private bool _pageReady;          // 页面已加载并注册好宿主消息监听（由页面上报 ready）
@@ -227,6 +235,7 @@ namespace QuickPreview
             InitTray();
             InitHook();
             InitHeartbeat();
+            InitUpdate();
 
             // 注意：这里**只在日志里记一笔，不弹气泡**。
             // 早期版本启动即弹「当前以管理员权限运行，无法读取选中文件」，但这是误报：
@@ -307,6 +316,19 @@ namespace QuickPreview
             });
 
             menu.Items.Add(new ToolStripSeparator());
+
+            var autoUpd = new ToolStripMenuItem("自动检查更新") { Checked = AppConfig.AutoUpdate };
+            autoUpd.Click += (s, e) =>
+            {
+                autoUpd.Checked = !autoUpd.Checked;
+                AppConfig.AutoUpdate = autoUpd.Checked;
+                Log.I(LogKind.Update, "自动检查更新：" + (autoUpd.Checked ? "开启" : "关闭"));
+            };
+            menu.Items.Add(autoUpd);
+
+            menu.Items.Add("检查更新…", null, (s, e) => CheckUpdateFromTray());
+
+            menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("关于 QuickPreview…", null, (s, e) => ShowAbout());
             menu.Items.Add("查看日志…", null, (s, e) => ShowLogViewer());
             menu.Items.Add("打开日志目录", null, (s, e) =>
@@ -383,6 +405,143 @@ namespace QuickPreview
             catch (Exception ex)
             {
                 Log.E(LogKind.App, "打开日志窗口失败", ex);
+            }
+        }
+
+        // ---------- 自动更新 ----------
+        private void InitUpdate()
+        {
+            _updateTimer.Tick += (s, e) => MaybeAutoCheck();
+            _updateTimer.Start();
+
+            // 启动后 60 秒再查：冷启动阶段 WebView2 正在初始化，别跟它抢 IO，
+            // 也让用户先能用上预览，而不是一开机就看到一个更新窗口。
+            var startup = new System.Windows.Forms.Timer { Interval = 60 * 1000 };
+            startup.Tick += (s, e) =>
+            {
+                startup.Stop();
+                startup.Dispose();
+                if (Program.StartedAfterUpdate) AnnounceUpdated();
+                else MaybeAutoCheck();
+            };
+            startup.Start();
+            Log.I(LogKind.Update, "自动检查更新：" + (AppConfig.AutoUpdate ? "开启" : "关闭")
+                + "，间隔 " + AppConfig.UpdateIntervalHours + " 小时");
+        }
+
+        /// <summary>本次是被安装程序更新后重新拉起的：提示一下，并推迟下一次自动检查。</summary>
+        private void AnnounceUpdated()
+        {
+            var v = AppVersion.Current;
+            AppConfig.SetLastUpdatedVersion(v);
+            AppConfig.MarkUpdateChecked();     // 刚装完别再立刻查，否则像"更新完又提示更新"
+            Log.I(LogKind.Update, "更新完成，当前运行 v" + v);
+            Balloon("已更新到 v" + v, "QuickPreview 已是最新版本，设置与窗口位置保持不变。", ToolTipIcon.Info);
+        }
+
+        private void MaybeAutoCheck()
+        {
+            if (!AppConfig.AutoUpdate) return;
+            if (!AppConfig.UpdateCheckDue()) return;
+            if (_updateChecking) return;
+            if (_updateForm != null && !_updateForm.IsDisposed) return;   // 已经在提示了
+            _ = AutoCheckAsync();
+        }
+
+        private async System.Threading.Tasks.Task AutoCheckAsync()
+        {
+            _updateChecking = true;
+            try
+            {
+                var r = await UpdateService.CheckAsync(AppVersion.Current, System.Threading.CancellationToken.None);
+                if (IsDisposed) return;
+
+                AppConfig.MarkUpdateChecked();     // 无论成败都记时间，避免断网时每分钟重试
+
+                if (!r.Ok)
+                {
+                    Log.W(LogKind.Update, "自动检查更新失败（不打扰用户）：" + r.Message);
+                    return;
+                }
+                if (!r.NewerAvailable)
+                {
+                    Log.I(LogKind.Update, "自动检查：已是最新版本 v" + AppVersion.Current);
+                    return;
+                }
+                if (AppConfig.ShouldSuppressUpdate(r.Info.Version))
+                {
+                    Log.I(LogKind.Update, "自动检查：v" + r.Info.Version + " 已被跳过或设为稍后提醒，本次不提示");
+                    return;
+                }
+
+                // 自动发现时不抢焦点：用户很可能正在打字，弹窗抢焦点会打断输入
+                ShowUpdateWindow(r.Info, activate: false);
+            }
+            catch (Exception ex)
+            {
+                Log.W(LogKind.Update, "自动检查更新异常（不打扰用户）：" + ex.Message);
+            }
+            finally
+            {
+                _updateChecking = false;
+            }
+        }
+
+        /// <summary>托盘「检查更新…」：先开窗再联网，用户能看到"正在检查"而不是点了没反应。</summary>
+        private void CheckUpdateFromTray()
+        {
+            Log.I(LogKind.Update, "托盘菜单：检查更新");
+
+            if (_updateForm != null && !_updateForm.IsDisposed)
+            {
+                if (_updateForm.IsBusy)
+                {
+                    // 正在下载/安装，打断没有意义，只把窗口提到前面
+                    _updateForm.ShowUpdateWindow(true);
+                    return;
+                }
+                // 旧窗口停在"已是最新版本"或"发现新版本"时，用户再点检查＝想重新查一次
+                _updateForm.Close();
+                _updateForm = null;
+            }
+
+            _updateForm = new UpdateForm(ExitForInstall);
+            _updateForm.FormClosed += (s, e) => { _updateForm = null; };
+            _updateForm.ShowUpdateWindow(true);
+        }
+
+        private void ShowUpdateWindow(UpdateInfo info, bool activate)
+        {
+            if (_updateForm != null && !_updateForm.IsDisposed)
+            {
+                _updateForm.ShowUpdateWindow(activate);
+                return;
+            }
+            _updateForm = new UpdateForm(info, ExitForInstall);
+            _updateForm.FormClosed += (s, e) => { _updateForm = null; };
+            _updateForm.ShowUpdateWindow(activate);
+        }
+
+        /// <summary>安装程序已启动：让出进程，由安装包覆盖文件并重新拉起（setup.iss 的 /relaunch=1）。</summary>
+        private void ExitForInstall()
+        {
+            Log.I(LogKind.Update, "更新：本实例退出，等待安装程序覆盖并重启");
+            try { _tray.Visible = false; } catch { }
+            Log.Shutdown();
+            Application.Exit();
+        }
+
+        /// <summary>托盘气泡提示（统一出口，失败不影响主流程）。</summary>
+        private void Balloon(string title, string text, ToolTipIcon icon)
+        {
+            try
+            {
+                if (_tray == null) return;
+                _tray.ShowBalloonTip(6000, title, text, icon);
+            }
+            catch (Exception ex)
+            {
+                Log.W(LogKind.App, "气泡提示失败：" + ex.Message);
             }
         }
 
