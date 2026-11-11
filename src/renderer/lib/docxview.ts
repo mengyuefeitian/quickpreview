@@ -50,7 +50,7 @@ async function waitTabStopsReady(root: HTMLElement): Promise<void> {
   }
 }
 
-// 【坑，v1.9.1 修】量尺寸之前必须等图片解码完、字体落地。
+// 【坑，v1.9.2 修】量尺寸之前必须等图片解码完、字体落地。
 // docx-preview 的图片是 `<img src="blob:…">`，renderAsync 返回时它们还没 load，
 // getBoundingClientRect() 的高度是 0 —— 按页拆分时把这些图当成"不占地方"，
 // 估出来的页高严重偏小（实测某节估算 790px、图片就位后实际 2319px），
@@ -391,7 +391,7 @@ export function cutSection(sec: HTMLElement, limit: number): HTMLElement[] {
   // 一次性量完估算占位，避免边搬边测反复重排。
   // 队列会在拆表时就地插入新段，所以量好的高度也同步用数组维护。
   //
-  // 【坑，v1.9.1 修】估算不能用 blockHeight（= rect 高 + marginTop + marginBottom）：
+  // 【坑，v1.9.2 修】估算不能用 blockHeight（= rect 高 + marginTop + marginBottom）：
   // 流内相邻段落的上下外边距会折叠成 max(上, 下)，逐块把两个边距都加上等于
   // 把行距算了两遍。实测一页 6 段估 704px、实际只占 617px，每页凭空少装一成半内容，
   // 128 页里有 78 页空着三成 —— 页数比 Word 的 94 页多出三分之一。
@@ -437,7 +437,7 @@ export function cutSection(sec: HTMLElement, limit: number): HTMLElement[] {
 
     // 切页只听实测的，估算只用来决定「什么时候该量」。
     //
-    // 【坑，v1.9.1 修】原来按「估算和超过可用高度」直接换页，结果一整页只装六七成：
+    // 【坑，v1.9.2 修】原来按「估算和超过可用高度」直接换页，结果一整页只装六七成：
     // 估算是文档渲染完那一刻的位置差，某些段落（带内嵌图/锚点/段前间距）在那个
     // 上下文里量出来偏大一倍多 —— 日志里一目了然：触发换页的段估算 274~370px，
     // 真放到下一页只有 140px，白让出半页。改成先放进去、再实测、溢出了才退回来。
@@ -647,7 +647,7 @@ export async function renderDocxViewer(
   // 【坑】绝不能把 wrapper 删掉：docx-preview 注入的样式表全是
   // `.docx-preview-wrapper > section.docx-preview { width/padding/background … }`
   // 这种带父级的选择器，删了 wrapper 页面就丢失宽度与白底，表现为"一片空白"。
-  // 【坑，v1.9.1 修】但也**不能**用 `display: contents` 把 wrapper 从布局里摘掉：
+  // 【坑，v1.9.2 修】但也**不能**用 `display: contents` 把 wrapper 从布局里摘掉：
   // CSS 计数器只在「生成了盒子的元素」上建栈，而 docx-preview 把
   // `counter-reset: docx-preview-num-…` 恰恰写在 .docx-preview-wrapper 上。
   // display:contents 让该元素不产生盒子 ⇒ 复位失效 ⇒ 章节号全部从 0 起，
@@ -727,7 +727,7 @@ export async function renderDocxViewer(
 
   // 隐藏非当前页用「挪出可视区 + visibility:hidden」，**不能用 display:none**。
   //
-  // 【坑，v1.9.1 修】docx-preview 的多级编号是纯 CSS 计数器实现的
+  // 【坑，v1.9.2 修】docx-preview 的多级编号是纯 CSS 计数器实现的
   // （p.num-1-1:before { counter-increment: … }，根元素 counter-reset）。
   // 计数器只在「生成了盒子的元素」上累加 —— display:none 的页面整棵子树
   // 不参与计数，于是单页/双页模式下前面几十页的标题编号全部丢失：
