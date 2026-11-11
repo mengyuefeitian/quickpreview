@@ -7,6 +7,82 @@
 
 ---
 
+## [1.9.2] - 2026-11-11
+
+### 修复
+
+- **「检查更新」失败的日志现在能看出真正原因**
+  原来网络失败只记外层异常，而 `HttpRequestException` 的 Message 恒为
+  `The SSL connection could not be established, see inner exception.` —— 真正的原因
+  （证书链 `PartialChain`、超时、代理拒绝、DNS）全在内层，等于没记。现在把整条异常链
+  摊平成一行写入日志，并把「证书校验失败」从「连不上网」里单独区分出来，界面提示也一并改写
+  （证书问题重试无用，得换网络或找网管，不该让用户反复点重试）。
+
+  起因是一次实测：某台机器上托盘「检查更新」报 SSL 失败，日志里只有上面那句无用的话，
+  得另写探测程序才查出是本机根证书存储缺少 Sectigo 根证书（GitHub 证书链用的就是它），
+  导致任何使用该 CA 的站点在 .NET 里都报 `PartialChain`。程序拒绝连接的行为是正确的，
+  证书校验不能为「让更新能用」而放宽——更新器一旦能跳过校验，就等于开了任意代码执行的口子。
+
+## [1.9.1] - 2026-11-10
+
+### 修复
+
+- **Word 预览：符号标记图标不再碎图（EMF/WMF 元文件光栅化）**
+  手册里「警告 / 注意 / 说明 / 窍门」这类标记常以 EMF/WMF 元文件插图，Chromium 根本不解码，
+  `<img>` 的 `naturalWidth` 恒为 0 —— 表现为一整排碎图标。现在渲染前由宿主的 GDI+ 把
+  元文件重放成 3 倍 PNG（最长边封顶 4000px）顶掉原条目，同时把 `[Content_Types].xml` 里
+  `emf`/`wmf` 的 ContentType 改成 `image/png`（docx-preview 的 MIME 就是从这里取的），
+  页面侧照常按 PNG 渲染。裸 WMF 补 22 字节 Aldus 头再试一次。实测 4 个标记图标 4/4 成功。
+
+- **Word 预览：章节编号整体 +1 / 单页模式下编号从 0 起**
+  三个独立原因叠在一起，缺一个都修不干净：
+  ① 源文档里「目录」这类段落的 `pStyle` 沿 `basedOn` 链指向 `numId=0`（Word 里表示
+    「显式不要编号」），而 docx-preview 的 `processStyles` 用 `mergeDeep(子, 基)` 合并样式，
+    **基样式反向覆盖子样式**，`numId=0` 被 heading 的 `numId=1` 盖掉 ⇒ 整篇章节号 +1。
+    预处理给这类段落补一条段落级 `<w:numPr><w:ilvl w:val="0"/><w:numId w:val="0"/></w:numPr>`
+    —— docx-preview 取编号时是 `elem.numbering ?? style?.paragraphProps?.numbering`，
+    段落级存在就直接生效，不参与样式合并。
+  ② 编号是纯 CSS 计数器实现的，而计数器只在**生成了盒子**的元素上累加。单页模式原来用
+    `display:none` 藏非当前页，前面几十页的标题直接不计数 ⇒ 第 5 章显示成「1」、5.1 成「0.1」。
+    改成 `position:absolute + left:-99999px + visibility:hidden`：仍参与布局（计数器连续），
+    但不可见、不响应鼠标，负 left 也不会产生滚动条。顺带所有页常驻已布局状态，翻页更快。
+  ③ 排版容器 `.docx-preview-wrapper` 原来设了 `display:contents` 好让它不参与布局，可
+    docx-preview 的 `counter-reset: docx-preview-num-…` 恰好写在这个元素上 ——
+    不生成盒子 ⇒ 复位失效 ⇒ 章节号从 0 起（真机上就是「0.1 读者对象」）。
+    改为让 wrapper 自己当 flex 排版容器（`.docx-stage > .docx-preview-wrapper`）。
+
+- **Word 预览：页脚页码每页都印缓存值（第 19 页，共 19 页）**
+  页脚里的 PAGE / NUMPAGES 是复杂域：`fldChar begin → instrText " PAGE " → separate → 缓存结果 → end`。
+  docx-preview 丢掉指令、只渲染缓存值，于是每一页都印同一个数。预处理器把整个域换成哨兵字符
+  （`\uE000P\uE001` / `\uE000N\uE001`），分页结束后逐页回填本阅读器的页号与总页数 ——
+  页眉页脚是每页一份副本，同一个哨兵在不同页里取不同值。口径是「本阅读器的第几页」：
+  与 Word 的绝对页码仍可能有差异（排版引擎不同），但不再是每页一个固定数字。
+
+- **Word 预览：分页把内容摊薄，一页只装六七成**
+  四个问题串在一起，全在 `docxview.ts` 的分页器里：
+  ① `renderAsync` 返回时图片还没解码，`getBoundingClientRect()` 高度是 0 ⇒ 带图的块被当成
+     「不占地方」（实测某节估算 790px、图片就位后实际 2319px）。量尺寸前补一步
+     `waitAssetsReady`：等图片 `load`/`error` + `document.fonts.ready`。
+  ② 估算用 `blockHeight`（rect 高 + 上下 margin）逐块累加，而相邻段落的上下外边距会折叠成
+     `max(上, 下)`，等于把行距算两遍。改成「累计底边之差」。
+  ③ 一旦某页溢出就按 `inner²/actual` 缩小可用高度重切，`actual` 到 1300px 时 limit 就从 931
+     掉到 660 —— 好页也被切碎。删掉这套缩放，改成「先放进去、实测溢出才退回」。
+  ④ 退回时如果当前页刚建好，会留下一个空页。现在退回的前提是本页还剩别的块。
+  结果：同一份手册的页数从 128 页降到 118 页，空页 4 个 → 0，溢出页 3 个 → 0，
+  「页面被撑高」告警消失。
+
+- **资源管理器选中项不跟随方向键**
+  预览里按 ↑/↓ 换文件时，文件夹里的选中高亮一直停在最初那个文件上，名字相近的一批文档
+  根本分不清看到第几个。现在每次换文件都让宿主调 `ShellFolderView.SelectItem`
+  （`SVSI_SELECT | SVSI_DESELECTOTHERS | SVSI_ENSUREVISIBLE`，不加 `SVSI_FOCUSED`
+  以免抢焦点），Win11 多标签页仍按活动标签定位；同一路径 400ms 内去重，避免连按时把
+  资源管理器 UI 线程打满。路径必须命中本次预览的文件列表才会执行，避免误改其它窗口的选中项。
+
+### 变更
+
+- 分页入口统一到 `prepareDocx()`：页眉页脚继承、`numId=0` 修正、页码域换哨兵、EMF 转 PNG
+  一次解包/重打包完成，日志汇总成一行（清编号 N / 页码域 N→回填 M / EMF→PNG N）。
+
 ## [1.9.0] - 2026-11-03
 
 ### 新增

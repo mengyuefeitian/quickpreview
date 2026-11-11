@@ -387,6 +387,135 @@ namespace QuickPreview
         }
 
         /// <summary>
+        /// 在指定资源管理器窗口里选中某个文件（预览里按方向键换文件时调用）。
+        ///
+        /// 【为什么用 Shell.Application 的 Document.SelectItem 而不是 IShellView】
+        /// SelectItem 是 ShellFolderView 的自动化方法，参数就是 FolderItem + SVSIF 标志，
+        /// 不用自己拼 PIDL / IShellFolder::ParseDisplayName，也不用担心 View 的进程内对象
+        /// 跨进程封送。FolderItem 用 Folder.ParseName 直接按文件名取，大目录也不用全量枚举。
+        ///
+        /// 标志：SVSI_SELECT(0x1) 选中、SVSI_DESELECTOTHERS(0x4) 取消其它选中、
+        /// SVSI_ENSUREVISIBLE(0x8) 滚到可见；**不要**加 SVSI_FOCUSED，那会抢焦点。
+        /// </summary>
+        public static bool SelectIn(IntPtr explorerHwnd, string path)
+        {
+            if (explorerHwnd == IntPtr.Zero || string.IsNullOrEmpty(path)) return false;
+
+            // 方向键连按时同一个文件会被重复请求（每次都是一轮跨进程 COM），
+            // 400ms 内同路径直接跳过，避免把资源管理器的 UI 线程打满。
+            long now = Environment.TickCount64;
+            if (string.Equals(path, _lastSelectedPath, StringComparison.OrdinalIgnoreCase)
+                && now - _lastSelectTick < 400)
+                return true;
+
+            try
+            {
+                string dir = Path.GetDirectoryName(path);
+                string name = Path.GetFileName(path);
+                if (string.IsNullOrEmpty(name)) return false;
+
+                var shellType = Type.GetTypeFromProgID("Shell.Application");
+                if (shellType == null)
+                {
+                    Log.W(LogKind.Hook, "Shell.Application COM 不可用（无法同步选中项）");
+                    return false;
+                }
+
+                dynamic shell = Activator.CreateInstance(shellType);
+                dynamic windows = shell.Windows();
+
+                // 同一个 hwnd 下可能有多个 ShellWindow（Win11 多标签页）：
+                // 优先挑「活动标签」那个，判据与读取选中项时一致。
+                var tabWindows = EnumTabWindows(explorerHwnd);
+                IntPtr activeTab = tabWindows.Count > 0 ? tabWindows[0] : IntPtr.Zero;
+
+                var strict = new List<dynamic>();
+                var loose = new List<dynamic>();
+                foreach (var w in windows)
+                {
+                    try
+                    {
+                        if (Convert.ToInt64(w.HWND) != explorerHwnd.ToInt64()) continue;
+                        loose.Add(w);
+                        if (activeTab == IntPtr.Zero) continue;
+                        IntPtr? tab = TabHwndOf(w);
+                        if (tab.HasValue && tab.Value == activeTab) strict.Add(w);
+                    }
+                    catch { /* 单个窗口出错不影响其它窗口 */ }
+                }
+
+                var targets = strict.Count > 0 ? strict : loose;
+                if (targets.Count == 0)
+                {
+                    Log.D(LogKind.Hook, "同步选中项：没找到 hwnd=" + explorerHwnd.ToInt64() + " 对应的 ShellWindow");
+                    return false;
+                }
+
+                foreach (var w in targets)
+                {
+                    if (TrySelect(w, dir, name, path))
+                    {
+                        _lastSelectedPath = path;
+                        _lastSelectTick = now;
+                        Log.I(LogKind.Hook, "已同步资源管理器选中项：" + name);
+                        return true;
+                    }
+                }
+
+                Log.D(LogKind.Hook, "同步选中项未命中（文件可能不在该窗口目录里）：" + path);
+            }
+            catch (Exception ex)
+            {
+                Log.W(LogKind.Hook, "同步资源管理器选中项失败：" + ex.Message);
+            }
+            return false;
+        }
+
+        private static string _lastSelectedPath;
+        private static long _lastSelectTick;
+
+        private static bool TrySelect(dynamic w, string dir, string name, string path)
+        {
+            try
+            {
+                // 目录不一致说明这个 ShellWindow 显示的不是该文件所在的文件夹（多标签页取错）
+                string locDir = FileUrlToDir(Convert.ToString(w.LocationURL));
+                if (!string.IsNullOrEmpty(locDir) && !SameDir(dir, locDir)) return false;
+
+                dynamic doc = w.Document;
+                if (doc == null) return false;
+
+                dynamic item = null;
+                try { item = doc.Folder.ParseName(name); } catch { /* 下面再枚举兜底 */ }
+
+                if (item == null)
+                {
+                    foreach (var it in doc.Folder.Items())
+                    {
+                        try
+                        {
+                            if (string.Equals(Convert.ToString(it.Path), path, StringComparison.OrdinalIgnoreCase))
+                            {
+                                item = it;
+                                break;
+                            }
+                        }
+                        catch { /* 跳过读不到属性的项 */ }
+                    }
+                }
+                if (item == null) return false;
+
+                doc.SelectItem(item, 0x1 | 0x4 | 0x8);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Log.D(LogKind.Hook, "SelectItem 失败：" + ex.Message);
+                return false;
+            }
+        }
+
+        /// <summary>
         /// 读取单个 ShellWindow 的选中项；返回 null 表示该窗口没读到（调用方继续试下一个）。
         /// </summary>
         private static List<string> ReadSelection(dynamic w)

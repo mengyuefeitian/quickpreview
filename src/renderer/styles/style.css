@@ -426,7 +426,12 @@ body.overlay .preview-placeholder { display: none; }
   /* 不能用 width: max-content：它和页面自身的百分比宽度互相依赖，会算成 0 宽导致整页不可见 */
   width: 100%; min-height: 100%;
 }
-.docx-stage .docx-preview-wrapper { background: transparent !important; padding: 0 !important; display: contents; }
+/* wrapper 自己当排版容器（不能再用 display:contents —— 见 docxview.ts 里的说明） */
+.docx-stage > .docx-preview-wrapper {
+  display: flex; align-items: flex-start; justify-content: center; gap: 14px;
+  flex: 1 1 auto; width: 100%; min-width: 0;
+  background: transparent !important; padding: 0 !important; box-shadow: none !important;
+}
 .docx-stage section.docx-preview {
   margin: 0 !important; box-shadow: 0 3px 14px rgba(0,0,0,.18) !important; flex: 0 0 auto;
 }

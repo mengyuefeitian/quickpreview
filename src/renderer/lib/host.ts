@@ -56,6 +56,10 @@ onHostMessage((msg: any) => {
     const cb = pendingStats.get(msg.id);
     if (cb) { pendingStats.delete(msg.id); cb(msg as FolderStatReply); }
   }
+  if (msg && msg.type === 'emfPng' && typeof msg.id === 'number') {
+    const cb = pendingEmf.get(msg.id);
+    if (cb) { pendingEmf.delete(msg.id); cb(msg as EmfReply); }
+  }
 });
 
 export function requestFile(path: string, timeoutMs = 20000): Promise<FileReply> {
@@ -112,5 +116,24 @@ export function requestMedia(path: string, timeoutMs = 180000): Promise<MediaRep
     }, timeoutMs);
     pendingMedia.set(id, (r) => { clearTimeout(timer); resolve(r); });
     postToHost({ type: 'prepareMedia', id, path });
+  });
+}
+
+// ---------- EMF/WMF → PNG：消息往返通道 ----------
+// Word 里的符号标记（警告/注意/说明/窍门）大多是 word/media/imageN.emf。
+// 浏览器内核不解码 EMF/WMF，只能请宿主用 GDI+ 光栅化后回传（同一套消息往返通道）。
+export type EmfReply = { ok: boolean; base64?: string; error?: string };
+const pendingEmf = new Map<number, (r: EmfReply) => void>();
+let emfSeq = 1;
+
+export function requestEmfPng(base64: string, timeoutMs = 20000): Promise<EmfReply> {
+  return new Promise<EmfReply>((resolve, reject) => {
+    if (!isWebView2) { resolve({ ok: false, error: '非 WebView2 环境' }); return; }
+    const id = emfSeq++;
+    const timer = setTimeout(() => {
+      if (pendingEmf.delete(id)) reject(new Error('EMF 转换超时'));
+    }, timeoutMs);
+    pendingEmf.set(id, (r) => { clearTimeout(timer); resolve(r); });
+    postToHost({ type: 'emfToPng', id, base64 });
   });
 }

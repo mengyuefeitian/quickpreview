@@ -251,13 +251,17 @@ namespace QuickPreview
             }
             catch (HttpRequestException ex)
             {
-                res.Message = "无法连接 GitHub（请检查网络或代理）：" + Short(ex.Message);
-                Log.W(LogKind.Update, "检查更新网络失败：" + ex.Message);
+                // 提示语用最内层的原因，日志用完整链条 —— 两者用途不同，别混
+                var root = InnerMessage(ex);
+                res.Message = IsTlsError(ex)
+                    ? "HTTPS 证书校验失败，可能被网络代理或安全软件拦截：" + Short(root)
+                    : "无法连接 GitHub（请检查网络或代理）：" + Short(root);
+                Log.W(LogKind.Update, "检查更新网络失败：" + DescribeException(ex));
             }
             catch (Exception ex)
             {
-                res.Message = "检查更新失败：" + Short(ex.Message);
-                Log.W(LogKind.Update, "检查更新异常：" + ex.Message);
+                res.Message = "检查更新失败：" + Short(InnerMessage(ex));
+                Log.W(LogKind.Update, "检查更新异常：" + DescribeException(ex));
             }
             return res;
         }
@@ -599,6 +603,53 @@ namespace QuickPreview
             if (string.IsNullOrEmpty(s)) return "";
             s = s.Replace("\r", " ").Replace("\n", " ");
             return s.Length > 160 ? s.Substring(0, 160) + "…" : s;
+        }
+
+        /// <summary>
+        /// 把异常链摊平成一行 Type: Message &lt;- Type: Message …。
+        ///
+        /// 【为什么必须摊平】HttpRequestException 的 Message 恒为
+        /// "The SSL connection could not be established, see inner exception." ——
+        /// 真正的原因（证书链 PartialChain / 超时 / 代理拒绝 / DNS）只在内层。
+        /// 只记外层等于没记：2026-11-11 那次"检查更新失败"就因为日志只有这句话，
+        /// 得另写一个探测程序才查出是证书链不完整。
+        /// </summary>
+        internal static string DescribeException(Exception ex)
+        {
+            if (ex == null) return "";
+            var sb = new System.Text.StringBuilder();
+            int depth = 0;
+            for (var x = ex; x != null && depth < 5; x = x.InnerException, depth++)
+            {
+                if (depth > 0) sb.Append(" <- ");
+                sb.Append(x.GetType().Name).Append(": ").Append(x.Message);
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>最内层异常的消息 —— 那才是能给人看的原因。</summary>
+        private static string InnerMessage(Exception ex)
+        {
+            var x = ex;
+            while (x != null && x.InnerException != null) x = x.InnerException;
+            return x == null ? "" : x.Message;
+        }
+
+        /// <summary>
+        /// 异常链里是否是 TLS 证书校验失败（代理 / 安全软件最常见的拦截形态）。
+        /// 单独判出来是因为处理方式完全不同：证书问题重试无用，得让用户找网管或换网络。
+        /// </summary>
+        private static bool IsTlsError(Exception ex)
+        {
+            for (var x = ex; x != null; x = x.InnerException)
+            {
+                if (x is System.Security.Authentication.AuthenticationException) return true;
+                var m = x.Message;
+                if (!string.IsNullOrEmpty(m)
+                    && m.IndexOf("SSL connection could not be established", StringComparison.OrdinalIgnoreCase) >= 0)
+                    return true;
+            }
+            return false;
         }
 
         private static string GetString(JsonElement e, string name)

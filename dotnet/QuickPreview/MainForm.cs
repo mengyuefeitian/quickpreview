@@ -479,7 +479,7 @@ namespace QuickPreview
             }
             catch (Exception ex)
             {
-                Log.W(LogKind.Update, "自动检查更新异常（不打扰用户）：" + ex.Message);
+                Log.W(LogKind.Update, "自动检查更新异常（不打扰用户）：" + UpdateService.DescribeException(ex));
             }
             finally
             {
@@ -1545,6 +1545,29 @@ namespace QuickPreview
                         else
                             Log.W(LogKind.Web, "拒绝统计未授权路径：" + fsp.GetString());
                     }
+                    else if (type == "emfToPng" && root.TryGetProperty("base64", out var emfB64))
+                    {
+                        int id = 0;
+                        if (root.TryGetProperty("id", out var emfId)) emfId.TryGetInt32(out id);
+
+                        // docx 里的 EMF/WMF 矢量图（Word 的符号标记、Visio 粘贴图形）浏览器解不了，
+                        // 由宿主用 GDI+ 光栅化成 PNG 再回传。转换失败只让那几张图空着，不影响整篇预览。
+                        _ = HandleEmfToPngAsync(id, emfB64.GetString());
+                    }
+                    else if (type == "syncSelection" && root.TryGetProperty("path", out var selPath))
+                    {
+                        // 预览里用方向键换文件后，把资源管理器的选中项跟着挪过去，
+                        // 否则「预览在翻、文件夹里高亮不动」，用户会不知道自己看到的是哪个文件。
+                        var target = selPath.GetString();
+                        var owner = _lastExplorer;
+                        if (string.IsNullOrEmpty(target)) { }
+                        else if (!_allowed.Contains(target))
+                            Log.W(LogKind.Hook, "拒绝同步选中项（不在本次预览的文件列表里）：" + target);
+                        else if (owner == IntPtr.Zero)
+                            Log.W(LogKind.Hook, "跳过同步选中项：未记录宿主资源管理器窗口");
+                        else
+                            System.Threading.Tasks.Task.Run(() => ExplorerSelection.SelectIn(owner, target));
+                    }
                     else if (type == "ready")
                     {
                         _pageReady = true;
@@ -1641,6 +1664,66 @@ namespace QuickPreview
                 + (r.path == path ? "直接播放" : "转码产物") + " → " + r.mime);
 
             PostMediaReady(id, path, true, r.path, r.mime, null);
+        }
+
+        /// <summary>
+        /// 处理页面的 emfToPng 请求：把 docx 里的 EMF/WMF 元文件光栅化成 PNG 回传。
+        /// 走与 readFile 同一条消息往返通道（宿主对象方法调用在本机实测会报 0x80070057）。
+        /// </summary>
+        private async System.Threading.Tasks.Task HandleEmfToPngAsync(int id, string base64)
+        {
+            string png64 = null;
+            string error = null;
+            int ms = 0;
+
+            try
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var data = Convert.FromBase64String(base64 ?? string.Empty);
+                var png = await System.Threading.Tasks.Task.Run(() =>
+                {
+                    string err;
+                    var bytes = MetafileConverter.ToPng(data, out err);
+                    return new { bytes, err };
+                }).ConfigureAwait(false);
+                ms = (int)sw.ElapsedMilliseconds;
+
+                if (png.bytes != null) png64 = Convert.ToBase64String(png.bytes);
+                else error = png.err;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+            }
+
+            if (png64 != null)
+                Log.D(LogKind.Web, string.Format("EMF→PNG {0} 字节 → {1} 字节（{2}ms）",
+                    base64?.Length ?? 0, png64.Length, ms));
+            else
+                Log.W(LogKind.Web, "EMF→PNG 失败：" + error);
+
+            var payload = JsonSerializer.Serialize(new
+            {
+                type = "emfPng",
+                id = id,
+                ok = png64 != null,
+                base64 = png64,
+                error = error
+            });
+
+            // CoreWebView2 成员只能在 UI 线程访问
+            BeginInvoke(new Action(() =>
+            {
+                try
+                {
+                    if (_coreReady && _core != null)
+                        _core.PostWebMessageAsJson(payload);
+                }
+                catch (Exception ex)
+                {
+                    Log.E(LogKind.Web, "回传 EMF 转换结果失败", ex);
+                }
+            }));
         }
 
         /// <summary>

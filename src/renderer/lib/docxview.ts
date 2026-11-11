@@ -9,10 +9,10 @@
 //
 // 缩放用 CSS `zoom`（Chromium 支持，会真正重排、文字保持清晰），
 // 而不是 transform: scale（后者会留白且文字发虚）。
-import { postToHost } from './host';
+import { postToHost, requestEmfPng } from './host';
 import { mountZoomControl } from './zoom';
 import type { Pager } from './pdfview';
-import type { SectionFixResult } from './docxsec';
+import type { DocxPrepInfo } from './docxsec';
 
 export interface DocxViewerOptions {
   name: string;
@@ -23,6 +23,10 @@ export interface DocxViewerOptions {
 // 与 PDF 一致：单页/双页、缩放都跨文件保持
 let spreadPref = false;
 let zoomPref = 0;
+
+// docxsec 是动态 import 的（它带 JSZip，塞进首屏包不划算），
+// 页码回填要等到分页之后才用，所以在这里留一个引用。
+let fillPageFieldsFn: ((root: ParentNode, pageNo: number, total: number) => number) | null = null;
 
 const PAGE_GAP = 14;
 // 必须和 style.css 里 .docx-stage 的 padding 保持一致（18px 24px）
@@ -44,6 +48,27 @@ async function waitTabStopsReady(root: HTMLElement): Promise<void> {
     if (tabs.some((t) => /dotted|word-spacing/i.test(t.getAttribute('style') || ''))) return;
     await new Promise((r) => setTimeout(r, 40));
   }
+}
+
+// 【坑，v1.9.1 修】量尺寸之前必须等图片解码完、字体落地。
+// docx-preview 的图片是 `<img src="blob:…">`，renderAsync 返回时它们还没 load，
+// getBoundingClientRect() 的高度是 0 —— 按页拆分时把这些图当成"不占地方"，
+// 估出来的页高严重偏小（实测某节估算 790px、图片就位后实际 2319px），
+// 分页结果就是「有的页塞爆、有的页空着三成」，全篇页数从 94 页涨到 128 页。
+// 字体同理：字体没落地时按回退字体量，行高与折行都对不上。
+async function waitAssetsReady(root: HTMLElement, timeoutMs = 8000): Promise<void> {
+  const imgs = Array.from(root.querySelectorAll('img')) as HTMLImageElement[];
+  const pending = imgs.filter((i) => !i.complete);
+  if (pending.length) {
+    await Promise.race([
+      Promise.all(pending.map((i) => new Promise<void>((res) => {
+        i.addEventListener('load', () => res(), { once: true });
+        i.addEventListener('error', () => res(), { once: true });
+      }))),
+      new Promise<void>((res) => setTimeout(res, timeoutMs))
+    ]);
+  }
+  try { await (document as any).fonts?.ready; } catch { /* 老内核没有字体 API */ }
 }
 
 // docx-preview 把 <w:tab/> 模拟成「一个带巨大 word-spacing 的空格」：
@@ -345,6 +370,7 @@ export function cutSection(sec: HTMLElement, limit: number): HTMLElement[] {
   const head = sec.querySelector(':scope > header');
   const foot = sec.querySelector(':scope > footer');
   const made: HTMLElement[] = [];
+  let curSec = sec;
   let curArt = art;
   let acc = 0;
 
@@ -357,14 +383,37 @@ export function cutSection(sec: HTMLElement, limit: number): HTMLElement[] {
     if (foot) ns.appendChild(foot.cloneNode(true));
     (made.length ? made[made.length - 1] : sec).after(ns);
     made.push(ns);
+    curSec = ns;
     curArt = na;
     acc = 0;
   };
 
-  // 一次性量完（含上下外边距），避免边搬边测反复重排。
+  // 一次性量完估算占位，避免边搬边测反复重排。
   // 队列会在拆表时就地插入新段，所以量好的高度也同步用数组维护。
+  //
+  // 【坑，v1.9.1 修】估算不能用 blockHeight（= rect 高 + marginTop + marginBottom）：
+  // 流内相邻段落的上下外边距会折叠成 max(上, 下)，逐块把两个边距都加上等于
+  // 把行距算了两遍。实测一页 6 段估 704px、实际只占 617px，每页凭空少装一成半内容，
+  // 128 页里有 78 页空着三成 —— 页数比 Word 的 94 页多出三分之一。
+  // 改用「累计底边之差」：第 i 块的占位 = 它自己的底边 − 前一块的底边，
+  // 这个差值天然包含折叠后的真实间距。
+  const baseTop = art.getBoundingClientRect().top;
+  let prevBottom = 0;
   const queue = kids.slice();
-  const qh = kids.map(blockHeight);
+  const qh = kids.map((k) => {
+    // 浮动图片/文本框已经被摘成 absolute，不参与流内占位
+    if (getComputedStyle(k).position === 'absolute') return 0;
+    const bottom = k.getBoundingClientRect().bottom - baseTop;
+    const h = Math.max(0, bottom - prevBottom);
+    prevBottom = Math.max(prevBottom, bottom);
+    return h;
+  });
+
+  // 这一页实测有没有溢出：纸张高是 min-height，内容超出才能把 section 撑高。
+  // 估算只用来判断「什么时候该量」，真正的切页以实测为准 ——
+  // 原来那套「溢出后按 inner²/actual 缩小可用高度重切」会连带把好页切碎
+  // （actual 一到 1300px，limit 就从 931 掉到 660，每页只剩六七成内容）。
+  const overflowing = (el: HTMLElement): boolean => el.offsetHeight > pageBox(el).pageH + 2;
 
   for (let i = 0; i < queue.length; i++) {
     const k = queue[i];
@@ -386,29 +435,45 @@ export function cutSection(sec: HTMLElement, limit: number): HTMLElement[] {
       }
     }
 
-    // 当前页已装了内容、再加这一段就溢出 ⇒ 另起一页。
-    // acc === 0 时不切：单个段落本身就超过一页的话，硬塞到新页只会留个空页。
-    if (acc > 0 && acc + kh > limit) newPage();
+    // 切页只听实测的，估算只用来决定「什么时候该量」。
+    //
+    // 【坑，v1.9.1 修】原来按「估算和超过可用高度」直接换页，结果一整页只装六七成：
+    // 估算是文档渲染完那一刻的位置差，某些段落（带内嵌图/锚点/段前间距）在那个
+    // 上下文里量出来偏大一倍多 —— 日志里一目了然：触发换页的段估算 274~370px，
+    // 真放到下一页只有 140px，白让出半页。改成先放进去、再实测、溢出了才退回来。
     curArt.appendChild(queue[i]);
     acc += kh;
+
+    // 只在「估算说快到页底」或「刚放进去的是大块」时才量，避免每块都强制重排。
+    // 退回的前提是本页还剩别的块，否则这一块独占一页 —— 那属于「单块超页」，
+    // 硬挪到新页只会留下一个空页（之前 128 页里那几张空白页就是这么来的）。
+    const nearBottom = acc >= limit * 0.9 || kh >= limit * 0.35;
+    if (nearBottom && curArt.children.length > 1 && overflowing(curSec)) {
+      curArt.removeChild(queue[i]);
+      acc -= kh;
+      newPage();
+      i--;                                  // 这一块没装下，下一轮从新页重新装
+    }
+  }
+
+  // 切出来的页里偶尔会剩一张没有内容的空壳（估算/实测来回退让时新建、又没用上）。
+  // 用户看到的是一张白纸，直接摘掉 —— 空页上没有内容，删掉不影响排版。
+  for (let i = made.length - 1; i >= 0; i--) {
+    const a = made[i].querySelector(':scope > article');
+    if (!a || !a.children.length) {
+      made[i].remove();
+      made.splice(i, 1);
+    }
   }
   return made;
 }
 
 // 反复切，直到这一页不再溢出（或切不动 / 轮次用完）。
-// 第二轮起按「真实溢出比例」收缩可用高度：外边距折叠、分页后段落重新排布
-// 都会让第一次的估算偏乐观，光靠一次切分常有几页仍然高出几十像素。
 function paginate(sec: HTMLElement, depth = 0): HTMLElement[] {
   const box = pageBox(sec);
-  const over = sec.offsetHeight - box.pageH;
-  if (over <= 2 || depth >= 4) return [sec];
+  if (sec.offsetHeight - box.pageH <= 2 || depth >= 3) return [sec];
 
-  const actual = Math.max(1, sec.offsetHeight - box.padT - box.padB);
-  const limit = depth === 0
-    ? box.inner
-    : Math.max(80, Math.floor((box.inner * box.inner) / actual * 0.99));
-
-  const made = cutSection(sec, limit);
+  const made = cutSection(sec, box.inner);
   if (!made.length) return [sec];
 
   const out: HTMLElement[] = [sec];
@@ -450,23 +515,30 @@ export async function renderDocxViewer(
   const { renderAsync } = await import('docx-preview');
   if (stale()) return null;
 
-  // 页眉页脚按 OOXML 的「节内没写就继承上一节」补齐引用；
-  // 不补的话 docx-preview 只给第一节渲染页眉页脚，后面几十页全是光板。
-  // titlePg（首页不同）也在这里修 —— docx-preview 首页取不到 first 引用时会退回 default，
-  // 于是封面被硬塞上正文页眉页脚。
+  // 交给 docx-preview 之前先预处理：页眉页脚继承、numId=0 显式关编号、
+  // 页脚页码域换成哨兵、EMF/WMF 元文件光栅化成 PNG。
+  // 不预处理的话：后面几十页没有页眉页脚、章节号整体 +1、每页都印「第 19 页，共 19 页」、
+  // 符号标记全是碎图标 —— 这四件事浏览器侧都无解。
   let input: ArrayBuffer | Blob = ab;
-  let secInfo: SectionFixResult | null = null;
+  let secInfo: DocxPrepInfo | null = null;
   let preMs = 0;
   const preStart = Date.now();
   try {
-    const { fixSectionHeaderFooter } = await import('./docxsec');
-    const fixed = await fixSectionHeaderFooter(ab);
+    const { prepareDocx, fillPageFields } = await import('./docxsec');
+    fillPageFieldsFn = fillPageFields;
+    const fixed = await prepareDocx(ab, {
+      // 非 WebView2（Electron 开发模式）没有宿主可转换，返回 null 让它保持原样
+      emfToPng: async (b64) => {
+        const r = await requestEmfPng(b64);
+        return r.ok && r.base64 ? r.base64 : null;
+      }
+    });
     preMs = Date.now() - preStart;
     if (fixed) {
       input = fixed.data;
       secInfo = fixed.info;
     }
-  } catch { /* 预处理失败不致命：按原样渲染，只是页眉页脚可能缺 */ }
+  } catch { /* 预处理失败不致命：按原样渲染，只是页眉页脚/编号/页码可能不准 */ }
   if (stale()) return null;
 
   // 离屏渲染：先让 docx-preview 完整产出，再取其中的页面元素重新编排
@@ -511,6 +583,10 @@ export async function renderDocxViewer(
   const wrapper = (off.querySelector('.docx-preview-wrapper')
     || off.querySelector('[class$="-wrapper"]')) as HTMLElement | null;
 
+  // 图片/字体就绪之后才谈得上量尺寸（见 waitAssetsReady 里的说明）
+  await waitAssetsReady(wrapper || off);
+  if (stale()) { off.remove(); styleHost.remove(); return null; }
+
   // 目录（TOC）制表位修正：必须在量页面尺寸之前做完，
   // 否则被撑高的目录页会让 naturalH 严重偏大，把「适应窗口」压到 25% 之类，字小到看不清。
   await waitTabStopsReady(wrapper || off);
@@ -532,6 +608,15 @@ export async function renderDocxViewer(
   // 分页会把段落搬到别的页，浮动元素的纸张坐标要在分页之后再落一次
   applyAnchors();
 
+  // 页脚页码回填：必须等分页完成（页数、每页位置都定了）才能算，
+  // 且要逐页做 —— 页眉页脚是每页一份副本，同一个哨兵在各页里值不同。
+  // 页号口径就是「本阅读器的第几页」；Word 的 PAGE 域按自己的排版算，
+  // 两边分页不完全一致时会有个位数差异，这比每页都印缓存值「第 19 页，共 19 页」好得多。
+  let fieldsFilled = 0;
+  for (let i = 0; i < pages.length && fillPageFieldsFn; i++) {
+    fieldsFilled += fillPageFieldsFn(pages[i], i + 1, pages.length);
+  }
+
   postToHost({
     type: 'log',
     message: `Word 结构：${splitInfo.from === pages.length ? `${pages.length} 页` : `重排 ${splitInfo.from}→${pages.length} 页（含超长页 ${splitInfo.split} 个）`}`
@@ -540,6 +625,9 @@ export async function renderDocxViewer(
       + (anchorInfo.boxes ? `，文本框 ${anchorInfo.boxes}` : '')
       + (anchorInfo.reserved ? `（占位 ${anchorInfo.reserved}）` : '')
       + (secInfo ? `，页眉页脚继承 ${secInfo.inherited}${secInfo.blankFirst ? `+空白首页 ${secInfo.blankFirst}` : ''}（${secInfo.sections} 节）` : '')
+      + (secInfo && secInfo.numCleared ? `，清编号 ${secInfo.numCleared}` : '')
+      + (secInfo && secInfo.fields ? `，页码域 ${secInfo.fields}→回填 ${fieldsFilled}` : '')
+      + (secInfo && (secInfo.emf || secInfo.emfFailed) ? `，EMF→PNG ${secInfo.emf}${secInfo.emfFailed ? `（失败 ${secInfo.emfFailed}）` : ''}` : '')
       + pageSpan(pages)
       + (secInfo ? `，预处理 ${preMs}ms${secInfo.ms ? `（解压 ${secInfo.ms.load}/取XML ${secInfo.ms.xml}/重打包 ${secInfo.ms.zip}）` : ''}` : '')
   });
@@ -559,7 +647,13 @@ export async function renderDocxViewer(
   // 【坑】绝不能把 wrapper 删掉：docx-preview 注入的样式表全是
   // `.docx-preview-wrapper > section.docx-preview { width/padding/background … }`
   // 这种带父级的选择器，删了 wrapper 页面就丢失宽度与白底，表现为"一片空白"。
-  // 保留它，靠 CSS 的 `display: contents` 让它不参与布局即可。
+  // 【坑，v1.9.1 修】但也**不能**用 `display: contents` 把 wrapper 从布局里摘掉：
+  // CSS 计数器只在「生成了盒子的元素」上建栈，而 docx-preview 把
+  // `counter-reset: docx-preview-num-…` 恰恰写在 .docx-preview-wrapper 上。
+  // display:contents 让该元素不产生盒子 ⇒ 复位失效 ⇒ 章节号全部从 0 起，
+  // 第 5 章显示成「0.1 / 0.1.1」（Chrome 实测复现）。
+  // 正确做法：让 wrapper 自己当排版容器（样式见 style.css 的
+  // `.docx-stage > .docx-preview-wrapper`），页面仍是它的直接子节点。
   if (wrapper) {
     stage.appendChild(wrapper);
   } else if (pages.length) {
@@ -567,13 +661,15 @@ export async function renderDocxViewer(
   }
   off.remove();
 
+  const pageHost: HTMLElement = wrapper || stage;
+
   const pageCount = pages.length || 1;
   const singlePageMode = !tooMany && pages.length > 1;
 
   // 页数极多、退化为连续滚动时，页面要竖着排（默认 flex 方向是横排）
   if (!singlePageMode) {
-    stage.style.flexDirection = 'column';
-    stage.style.alignItems = 'center';
+    pageHost.style.flexDirection = 'column';
+    pageHost.style.alignItems = 'center';
   }
 
   let page = 1;
@@ -629,12 +725,39 @@ export async function renderDocxViewer(
     return spread ? [page - 1, page].filter((i) => i >= 0 && i < pages.length) : [page - 1];
   }
 
+  // 隐藏非当前页用「挪出可视区 + visibility:hidden」，**不能用 display:none**。
+  //
+  // 【坑，v1.9.1 修】docx-preview 的多级编号是纯 CSS 计数器实现的
+  // （p.num-1-1:before { counter-increment: … }，根元素 counter-reset）。
+  // 计数器只在「生成了盒子的元素」上累加 —— display:none 的页面整棵子树
+  // 不参与计数，于是单页/双页模式下前面几十页的标题编号全部丢失：
+  // 第 5 章显示成「1 功能说明」、5.1 显示成「0.1」、5.1.1 显示成「0.1.1」。
+  // position:absolute + visibility:hidden 让页面仍然参与布局（因此计数器连续），
+  // 但完全不可见、也不响应鼠标；负 left 不会产生滚动条（滚动溢出只认右下方向）。
+  //
+  // 顺带的好处：所有页一直保持已布局状态，翻页不再触发整页重排，换页更快。
+  function setPageHidden(p: HTMLElement, hidden: boolean): void {
+    if (hidden) {
+      p.style.position = 'absolute';
+      p.style.left = '-99999px';
+      p.style.top = '0';
+      p.style.visibility = 'hidden';
+      p.style.pointerEvents = 'none';
+    } else {
+      p.style.position = '';
+      p.style.left = '';
+      p.style.top = '';
+      p.style.visibility = '';
+      p.style.pointerEvents = '';
+    }
+  }
+
   function paintPages(): void {
     if (!singlePageMode) return;
     const show = new Set(visibleRange());
-    pages.forEach((p, i) => { p.style.display = show.has(i) ? '' : 'none'; });
+    pages.forEach((p, i) => setPageHidden(p, !show.has(i)));
     // 双页模式下按行排布，第二页要贴在第一页右边
-    stage.style.flexWrap = spread ? 'nowrap' : 'nowrap';
+    pageHost.style.flexWrap = 'nowrap';
   }
 
   const step = (): number => (spread ? 2 : 1);
@@ -821,7 +944,7 @@ export async function renderDocxViewer(
 
   // 一行日志带上布局数值：Word 预览一旦"只剩灰底没有内容"，几乎都是
   // 页面没查到 / 宽度算成 0 / zoom 异常，这几个数能直接定位。
-  const shown = pages.filter((p) => p.style.display !== 'none').length;
+  const shown = pages.filter((p) => p.style.visibility !== 'hidden').length;
   postToHost({
     type: 'log',
     message: `Word 就绪：${pageCount} 页（${singlePageMode ? (spread ? '双页' : '单页') : '滚动'}，`

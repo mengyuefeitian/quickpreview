@@ -300,9 +300,20 @@ function selectIndex(i: number): void {
   updateActive();
 }
 
+// 预览里换了文件 → 让资源管理器的选中项跟着走。
+// 不通知的话，用户按方向键一路看下去，文件夹里的高亮始终停在最初那个文件上，
+// 分不清现在看到的是第几个（尤其是名字相近的一批文档）。
+// 由宿主去调 ShellFolderView.SelectItem，页面这边没有跨进程权限。
+function notifyHostSelection(): void {
+  if (!serviceMode) return;
+  const it = list[sel];
+  if (it) postToHost({ type: 'syncSelection', path: it.path });
+}
+
 function move(d: number): void {
   sel = clamp(sel + d);
   updateActive();
+  notifyHostSelection();
   if (!open) openPreview();
   else renderCurrent();
 }
@@ -310,6 +321,7 @@ function move(d: number): void {
 function moveSel(d: number): void {
   sel = clamp(sel + d);
   updateActive();
+  notifyHostSelection();
   if (open) renderCurrent();
 }
 
