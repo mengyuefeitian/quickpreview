@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>md 背景回归</title>
+<link rel="stylesheet" href="../src/renderer/styles/style.css" />
+<style>
+  /* 复刻服务模式：标题栏 + 预览区 */
+  .chrome-repro { flex: 0 0 auto; height: 34px; background: #2d2d30; border-bottom: 1px solid #3c3c3c; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header class="chrome-repro"></header>
+  <main class="layout" style="flex:1 1 auto;">
+    <section class="preview-pane" data-open="true" style="flex:1 1 auto;">
+      <div class="preview-body scroll-mode" id="preview-body"></div>
+      <div class="preview-bar" style="height:26px;">
+        <span class="pb-name">repro.md</span><span>Markdown</span>
+      </div>
+    </section>
+  </main>
+</div>
+<script>
+  var body = document.getElementById('preview-body');
+  var root = document.createElement('div'); root.className = 'md-view';
+  var inner = document.createElement('div'); inner.className = 'md-body';
+  root.appendChild(inner);
+
+  function add(html) { inner.insertAdjacentHTML('beforeend', html); }
+
+  add('<h1 class="md-h md-h1">排版回归样本 × 长文档背景测试</h1>');
+  add('<ul class="md-ul"><li class="md-li">比对日期：2026-11-18</li><li class="md-li">用途：验证内容超过一屏时白纸背景是否铺到文末</li></ul>');
+  add('<h2 class="md-h md-h2">结论速览</h2>');
+
+  // 长表格 + 多个段落，保证内容远超一屏
+  for (var s = 1; s <= 4; s++) {
+    add('<h3 class="md-h md-h3">' + s + '. 章节（表格 + 正文）</h3>');
+    var rows = '';
+    for (var i = 1; i <= 7; i++) {
+      rows += '<tr><td>' + i + '</td><td>第 ' + s + ' 节审核项 ' + i + '</td><td>为什么改不了：内容结构由文档决定，脚本无法判断语义。</td></tr>';
+    }
+    add('<table class="md-table"><thead><tr><th>#</th><th>审核项</th><th>为什么改不了</th></tr></thead><tbody>' + rows + '</tbody></table>');
+    add('<blockquote class="md-quote"><p class="md-p">一句话：格式类问题基本都能修；内容类、结构类、域、水印都不行。</p></blockquote>');
+    add('<p class="md-p">这一段是正文，用来制造足够的滚动长度。文字应当始终是深色、背景始终是白纸。</p>');
+  }
+
+  add('<hr class="md-hr">');
+  add('<pre class="md-pre"><code>FIXES = {"帐号": "账号", "其它": "其他"}</code></pre>');
+  add('<p class="md-p">样本结束。</p>');
+
+  body.appendChild(root);
+
+  // 量一遍，挂到 title 上方便脚本读
+  requestAnimationFrame(function () {
+    var pb = document.getElementById('preview-body');
+    var mv = root, mb = inner;
+    document.title = JSON.stringify({
+      pbClientH: pb.clientHeight,
+      pbScrollH: pb.scrollHeight,
+      mdViewH: Math.round(mv.getBoundingClientRect().height),
+      mdBodyH: Math.round(mb.getBoundingClientRect().height),
+      mdBodyScrollH: mb.scrollHeight,
+      bodyOverflowY: getComputedStyle(body).overflowY,
+      scrollMode: body.className
+    });
+  });
+</script>
+</body>
+</html>

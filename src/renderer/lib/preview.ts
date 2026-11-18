@@ -43,12 +43,85 @@ function resetScroll(body: Body, scrollable: boolean): void {
  * 优先走宿主直传通道（window.QP.readFileAsync → base64），不经过 HTTP 拦截，
  * 因此不受虚拟主机映射影响；Electron 开发模式下回退到 local:// 协议。
  */
-async function loadArrayBuffer(path: string): Promise<ArrayBuffer> {
+/** 超过这个大小就不再用"整包一个响应"，改为按区间分块拼。 */
+const CHUNKED_READ_MIN = 64 * 1024 * 1024;
+/** 单次区间请求的块大小，和宿主 MaxRangeChunk 保持一致 */
+const READ_CHUNK = 8 * 1024 * 1024;
+
+/**
+ * 大文件按区间分块读进内存。
+ *
+ * 【为什么不能一次整包 fetch】宿主用 `CreateWebResourceResponse` 返回一个 200 响应，
+ * 背后是它自己那条 214MB 的 FileStream。实测读一份 214MB 的 docx：
+ * **宿主进程常驻内存直接涨到 1.79GB**（小文档时只有 138MB），而且不还。
+ * 页面侧再拿一份 214MB，两边加起来光"把文件读进来"就吃掉 2GB，
+ * 这台 16GB 但在跑别的软件的机器上就是被系统干掉（用户看到的是"程序突然没了，
+ * 之后什么文件都打不开"）。
+ *
+ * 改成 8MB 一包按区间取（宿主那边就是 `&r=start-end` 查询参数那条路，
+ * 不产生 CORS 预检），宿主每次只持有 8MB，读完的内存只有页面这一份。
+ */
+async function loadByRange(url: string, size: number): Promise<ArrayBuffer> {
+  const out = new Uint8Array(size);
+  let off = 0;
+  let n = 0;
+  while (off < size) {
+    const end = Math.min(size - 1, off + READ_CHUNK - 1);
+    const res = await fetch(url + '&r=' + off + '-' + end);
+    if (!res.ok) throw new Error('区间读取失败：HTTP ' + res.status);
+    const part = await res.arrayBuffer();
+    const want = end - off + 1;
+    if (part.byteLength !== want) {
+      throw new Error(`区间读取长度不符（期望 ${want}，实际 ${part.byteLength} 字节）`);
+    }
+    out.set(new Uint8Array(part), off);
+    off = end + 1;
+    n++;
+  }
+  postToHost({ type: 'log', message: `大文件分块读取完成：${n} 段，共 ${size} 字节` });
+  return out.buffer;
+}
+
+async function loadArrayBuffer(path: string, knownSize = 0): Promise<ArrayBuffer> {
   const t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+  // 【v1.12】给整份读取加超时。
+  //
+  // 用户日志里出现过这样一幕：某个超大文档读完之后，后续每一次预览都停在
+  // 「渲染预览」之后、连「读取 xxx 字节」都打不出来 —— 宿主侧日志显示响应已经生成、
+  // 但页面这边 fetch 的 body 再也没到齐。这条请求就那么挂着，用户看到的是
+  // "什么文件都打不开了"，只能重启程序。
+  // 挂死本身不好根治（在 WebView2 的资源管道里），但至少不能让它无声无息：
+  // 超时就抛一个能显示出来的错误，让用户知道是这次读取失败、可以换一个文件继续。
+  // 大文件走分块，别让宿主为一份 200 响应把整个文件挂在内存里
+  if (knownSize > CHUNKED_READ_MIN) {
+    const ab = await loadByRange(appLocalUrl(path), knownSize);
+    const ms = Math.round((typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0);
+    const name = path.replace(/\\/g, '/').split('/').pop() || path;
+    postToHost({ type: 'log', message: `读取 ${name} ${ab.byteLength} 字节，耗时 ${ms} ms（分块）` });
+    return ab;
+  }
+
+  const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = ctl ? setTimeout(() => ctl.abort(), 120_000) : 0;
   // 主通道：__local 流式读取（支持任意大小，已验证可用）
-  const res = await fetch(appLocalUrl(path));
+  let res: Response;
+  let ab: ArrayBuffer;
+  try {
+    res = await fetch(appLocalUrl(path), ctl ? { signal: ctl.signal } : undefined);
+    if (res.ok) {
+      ab = await res.arrayBuffer();
+    } else {
+      ab = new ArrayBuffer(0);
+    }
+  } catch (e: any) {
+    if (e?.name === 'AbortError') {
+      throw new Error(`读取文件超时（120 秒）：${path.replace(/\\/g, '/').split('/').pop() || path}`);
+    }
+    throw e;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
   if (res.ok) {
-    const ab = await res.arrayBuffer();
     const ms = Math.round((typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0);
     const name = path.replace(/\\/g, '/').split('/').pop() || path;
     postToHost({ type: 'log', message: `读取 ${name} ${ab.byteLength} 字节，耗时 ${ms} ms` });
@@ -166,6 +239,18 @@ async function renderCore(item: FileItem, body: Body, bar: Bar, my: number): Pro
     }
 
     if (item.category === 'text') {
+      // Markdown 走排版渲染：按等宽文本显示 `#`/`**`/`|` 等于没预览
+      if (item.ext === 'md' || item.ext === 'mkd' || item.ext === 'markdown') {
+        resetScroll(body, true);
+        showLoading(body, '渲染 Markdown…');
+        const { renderMarkdownViewer } = await import('./markdown');
+        if (stale(my)) return;
+        await renderMarkdownViewer(item.path, body, bar, {
+          baseDir: item.path.replace(/[\\/][^\\/]*$/, ''),
+          stale: () => stale(my)
+        });
+        return;
+      }
       // 大文本（电子书类）必须分块：一次性解码+建 DOM 会直接卡死
       resetScroll(body, true);
       showLoading(body, '读取文本…');
@@ -470,12 +555,19 @@ async function renderDocx(
   item: FileItem, ab: ArrayBuffer, body: Body, bar: Bar, my: number
 ): Promise<void> {
   showLoading(body, '解析文档…');
+  // 大文档渲染要几十秒，把这句提示原地改成「进行到哪一步」——
+  // 用户看到数字在动，才不会以为卡死然后去猛点关闭
+  const loadingEl = body.querySelector('.loading') as HTMLElement | null;
+  const progress = (text: string): void => {
+    if (loadingEl && loadingEl.isConnected) loadingEl.textContent = text;
+  };
   try {
     const { renderDocxViewer } = await import('./docxview');
     if (stale(my)) return;
     const pager = await renderDocxViewer(ab, body, bar, {
       name: item.name,
       stale: () => stale(my),
+      progress,
       onBoundary: (dir) => { if (_onBoundary) _onBoundary(dir); }
     });
     if (stale(my)) { if (pager) pager.destroy(); return; }
@@ -499,7 +591,7 @@ async function renderDocx(
 async function renderOffice(item: FileItem, body: Body, bar: Bar, my: number): Promise<void> {
   const ext = item.ext;
   showLoading(body, '解析文档…');
-  const ab = await loadArrayBuffer(item.path);
+  const ab = await loadArrayBuffer(item.path, item.size);
   if (stale(my)) return;
 
   // 旧版二进制格式：.doc 可提取正文预览；.ppt 暂无可用的纯前端解析器

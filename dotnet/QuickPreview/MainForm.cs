@@ -46,6 +46,7 @@ namespace QuickPreview
         /// </summary>
         private const long MaxFullBody = 256L * 1024 * 1024;
         private const int VK_SPACE = 0x20;
+        private const int VK_ESCAPE = 0x1B;
         private const int HeartbeatMs = 30000;          // 心跳间隔（同时用于钩子存活检查）
 
         [DllImport("user32.dll")]
@@ -589,6 +590,22 @@ namespace QuickPreview
         /// </summary>
         private bool OnSpaceKey(int vk)
         {
+            // Esc 兜底关闭：大文档渲染时页面可能整段时间占住 JS 主线程，
+            // 自绘的 × 按钮和页面里的 Esc 都排不进事件队列 —— 用户表现为「点了关不掉」，
+            // 只能干等（实测 30MB 手册 40 秒，3 次点击全堆在渲染结束那一刻才生效）。
+            // 钩子由系统在输入同步上下文里调用，不依赖页面 JS，所以这条永远可用。
+            if (vk == VK_ESCAPE)
+            {
+                if (!_previewVisible || !_previewActive) return false;
+                Log.I(LogKind.Hook, "捕获 Esc（预览在前台）→ 关闭预览");
+                BeginInvoke(new Action(() =>
+                {
+                    try { HidePreview(); }
+                    catch (Exception ex) { Log.E(LogKind.Hook, "异步关闭预览失败", ex); }
+                }));
+                return true;
+            }
+
             if (vk != VK_SPACE) return false;          // 只关心空格，其它键一律放行
 
             try
@@ -803,12 +820,44 @@ namespace QuickPreview
                 return list;
             }
 
+            // 【坑，v1.9.4】以前这里是 Directory.GetFiles + StringComparer.Ordinal 排序，
+            // 和资源管理器屏幕上的顺序对不上：中文名按 UTF-16 码点排、数字也不做自然排序，
+            // 于是按方向键换文件时"下一个"会毫无规律地乱跳（用户实测 2→7→3）。
+            // 正确做法是直接问资源管理器要它当前的视图顺序（跟随用户选的排序方式），
+            // 拿不到才退回自己的排序。
+            try
+            {
+                IntPtr host = ExplorerSelection.HostWindow();
+                if (host == IntPtr.Zero) host = _lastExplorer;
+                var order = ExplorerSelection.GetViewOrder(host, path);
+                if (order != null && order.Count > 0)
+                {
+                    bool hasSelf = false;
+                    foreach (var p in order)
+                        if (string.Equals(p, path, StringComparison.OrdinalIgnoreCase)) { hasSelf = true; break; }
+
+                    if (hasSelf)
+                    {
+                        foreach (var p in order)
+                            if (FileTypes.IsPreviewable(p)) list.Add(p);
+                        Log.I(LogKind.Preview, "翻页顺序取自资源管理器视图（" + list.Count + " 个可预览项）");
+                        return list;
+                    }
+                    Log.D(LogKind.Preview, "视图顺序里没有当前文件（可能跨标签/跨窗口），退回自排序");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.D(LogKind.Preview, "取视图顺序失败，退回自排序：" + ex.Message);
+            }
+
+            list.Clear();
             try
             {
                 var dir = Path.GetDirectoryName(path);
                 if (string.IsNullOrEmpty(dir)) return list;
-                var files = Directory.GetFiles(dir);
-                Array.Sort(files, StringComparer.OrdinalIgnoreCase);
+                var files = new List<string>(Directory.GetFiles(dir));
+                ExplorerSelection.SortNatural(files);
                 foreach (var f in files)
                     if (FileTypes.IsPreviewable(f)) list.Add(f);
             }

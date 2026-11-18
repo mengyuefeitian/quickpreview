@@ -426,9 +426,13 @@ body.overlay .preview-placeholder { display: none; }
   /* 不能用 width: max-content：它和页面自身的百分比宽度互相依赖，会算成 0 宽导致整页不可见 */
   width: 100%; min-height: 100%;
 }
-/* wrapper 自己当排版容器（不能再用 display:contents —— 见 docxview.ts 里的说明） */
+/* wrapper 自己当排版容器（不能再用 display:contents —— 见 docxview.ts 里的说明）
+   【坑，v1.9.3 修】必须显式写 flex-direction: row：
+   docx-preview 自己注入 `.docx-preview-wrapper{display:flex;flex-flow:column;align-items:center}`，
+   不覆盖方向就仍是 column —— 此时我们的 align-items:flex-start 在交叉轴（水平）上生效，
+   表现为「页面靠左、右侧一大片灰」，双页也因为纵向堆叠永远只看得到一页。 */
 .docx-stage > .docx-preview-wrapper {
-  display: flex; align-items: flex-start; justify-content: center; gap: 14px;
+  display: flex; flex-direction: row; align-items: flex-start; justify-content: center; gap: 14px;
   flex: 1 1 auto; width: 100%; min-width: 0;
   background: transparent !important; padding: 0 !important; box-shadow: none !important;
 }
@@ -450,3 +454,98 @@ body.overlay .preview-placeholder { display: none; }
 .docx-stage p.qp-toc-item a { color: inherit !important; text-decoration: none !important; }
 .docx-modes { position: absolute; top: 10px; right: 12px; display: flex; gap: 6px; z-index: 2; }
 .docx-modes .pdf-mode { font-family: inherit; }
+
+/* ===========================================================================
+   Markdown 预览
+   日间阅读版式（浅底深字），与 Word/PDF 预览的"纸感"一致：
+   文档类内容用纸张观感最舒服，深色底只留给代码编辑器式的纯文本。
+   =========================================================================== */
+.md-view {
+  width: 100%; min-height: 100%; flex: 1 0 auto;
+  background: #f6f6f4; padding: 0 0 60px; user-select: text;
+  display: flex; justify-content: center;
+  /* 【坑，必须写 align-self】.preview-body 在 scroll-mode 下是
+     `display:flex; align-items:stretch` 的横向弹性容器 —— 子项会被拉到
+     "容器高度"（正好一屏），而不是"内容高度"。md 通常比一屏长得多，
+     溢出的那部分已经落在盒子外面，背景不再绘制 ⇒ 表现为
+     「第一屏白底正常，往下滚白底消失、黑字糊在深色底上看不见，
+      表格隔行底色变成一块块黑斑」。
+     纯文本预览 (.text-wrap) 底色和 --bg 一样是深色，所以这个坑一直没暴露。 */
+  align-self: flex-start;
+}
+.md-body {
+  width: 100%; max-width: 860px; padding: 44px 56px 40px;
+  background: #fff; color: #24292f;
+  font-family: -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  font-size: 15.5px; line-height: 1.75; word-wrap: break-word;
+  box-shadow: 0 1px 6px rgba(0,0,0,.08);
+}
+.md-body > *:first-child { margin-top: 0; }
+
+.md-h { margin: 1.6em 0 .7em; font-weight: 650; line-height: 1.3; color: #1f2328; }
+.md-h1 { font-size: 1.95em; padding-bottom: .28em; border-bottom: 1px solid #e4e7eb; }
+.md-h2 { font-size: 1.55em; padding-bottom: .24em; border-bottom: 1px solid #eceff2; }
+.md-h3 { font-size: 1.28em; }
+.md-h4 { font-size: 1.1em; }
+.md-h5, .md-h6 { font-size: 1em; color: #57606a; }
+
+.md-p { margin: .85em 0; }
+.md-body strong { font-weight: 660; color: #1f2328; }
+.md-body em { font-style: italic; }
+.md-body del { color: #8c959f; }
+
+.md-link { color: #0a68d4; text-decoration: none; border-bottom: 1px solid rgba(10,104,212,.28); }
+.md-link:hover { border-bottom-color: #0a68d4; }
+
+/* 行内代码：淡底 + 细边，和正文区分开但不抢眼 */
+.md-code {
+  font-family: "Cascadia Code", Consolas, "Courier New", monospace;
+  font-size: .88em; padding: .16em .42em; border-radius: 4px;
+  background: #f0f1f3; color: #b3306b; border: 1px solid #e6e8eb;
+}
+/* 代码块：深色，与项目整体暗色主题呼应 */
+.md-pre {
+  position: relative; margin: 1.05em 0; padding: 14px 18px; overflow-x: auto;
+  background: #1f2329; border-radius: 8px; border: 1px solid #2c3238;
+}
+.md-pre code {
+  font-family: "Cascadia Code", Consolas, "Courier New", monospace;
+  font-size: 13.2px; line-height: 1.62; color: #d6deeb; white-space: pre;
+}
+.md-lang {
+  position: absolute; top: 6px; right: 10px; font-size: 10.5px; letter-spacing: .04em;
+  text-transform: uppercase; color: #7d8998; user-select: none;
+}
+
+.md-quote {
+  margin: 1em 0; padding: .5em 1.1em; color: #4d5560;
+  border-left: 3px solid #d3d8de; background: #fafbfc;
+}
+.md-quote .md-p:first-child { margin-top: .2em; }
+.md-quote .md-p:last-child { margin-bottom: .2em; }
+
+.md-ul, .md-ol { margin: .8em 0; padding-left: 1.7em; }
+.md-ul { list-style: disc; }
+.md-ol { list-style: decimal; }
+.md-li { margin: .34em 0; }
+.md-li > .md-ul, .md-li > .md-ol { margin: .3em 0; }
+.md-task { list-style: none; margin-left: -1.3em; display: flex; align-items: baseline; gap: .55em; }
+.md-check {
+  flex: 0 0 auto; width: 15px; height: 15px; line-height: 15px; text-align: center;
+  border: 1.5px solid #b9c0c8; border-radius: 3.5px; font-size: 11px; color: #fff;
+  position: relative; top: 1px;
+}
+.md-check.done { background: #1a7f37; border-color: #1a7f37; }
+
+.md-table {
+  border-collapse: collapse; margin: 1.1em 0; font-size: .94em; width: auto; max-width: 100%;
+  display: block; overflow-x: auto;
+}
+.md-table th, .md-table td { border: 1px solid #d8dee4; padding: 7px 13px; }
+.md-table thead th { background: #f4f6f8; font-weight: 640; white-space: nowrap; }
+.md-table tbody tr:nth-child(2n) td { background: #fbfcfd; }
+
+.md-hr { border: 0; border-top: 1px solid #e4e7eb; margin: 1.9em 0; }
+.md-img { max-width: 100%; height: auto; display: block; margin: 1em auto; border-radius: 4px; }
+.md-body img.md-img[alt=""] { margin: 0; }
+.md-truncated { margin-top: 1.6em; padding: 10px 14px; background: #fff8e5; border: 1px solid #f0e0b0; border-radius: 6px; font-size: .9em; color: #7a5a00; }

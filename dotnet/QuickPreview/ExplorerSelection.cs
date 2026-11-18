@@ -26,17 +26,104 @@ namespace QuickPreview
         [DllImport("user32.dll")]
         private static extern bool EnumChildWindows(IntPtr hwndParent, EnumWindowProc lpEnumFunc, IntPtr lParam);
 
+        [DllImport("shell32.dll")]
+        private static extern int SHGetNameFromIDList(IntPtr pidl, int sigdnName, out IntPtr ppszName);
+
+        /// <summary>把 STRRET 转成字符串，并负责释放其中的 pOleStr。</summary>
+        [DllImport("shlwapi.dll", CharSet = CharSet.Unicode)]
+        private static extern int StrRetToBufW(ref STRRET pstr, IntPtr pidl, StringBuilder pszBuf, int cchBuf);
+
         /// <summary>
-        /// IShellBrowser（IID 000214E2-…-C000-000000000046），只取 IOleWindow::GetWindow()。
-        /// 对 InterfaceIsIUnknown 接口，C# 声明的方法从 vtable 槽 3 开始（前三个是 IUnknown），
-        /// 因此这里的 GetWindow() 正好落在槽 3，与 IOleWindow 的布局一致。
-        /// 用它反查「这个 ShellWindow 属于资源管理器里的哪个标签页窗口」。
+        /// 资源管理器「名称」列用的比较函数：带数字感知（文件2 排在 文件10 前面）、
+        /// 按系统 locale 排序。.NET 的 StringComparer.Ordinal 是 UTF-16 码点序，
+        /// 对中文名和数字名都和资源管理器对不上，只能当兜底。
+        /// </summary>
+        [DllImport("shlwapi.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+        private static extern int StrCmpLogicalW(string psz1, string psz2);
+
+        /// <summary>
+        /// STRRET：GetDisplayNameOf 的输出。
+        /// 它是个 union（pOleStr / uOffset / cStr[260]），这里只声明 uType 并把结构撑到 272 字节，
+        /// 保证 cStr 形态也有足够空间 —— 声明小了会踩坏栈。
+        /// </summary>
+        [StructLayout(LayoutKind.Sequential, Size = 272)]
+        private struct STRRET
+        {
+            public uint uType;
+        }
+
+        /// <summary>
+        /// IShellFolder（IID 000214E6-…），只用到 GetDisplayNameOf，
+        /// 但前面的方法必须按 vtable 顺序占位，否则槽位错位。
+        /// </summary>
+        [ComImport, Guid("000214E6-0000-0000-C000-000000000046")]
+        [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        private interface IShellFolder
+        {
+            int ParseDisplayName(IntPtr hwnd, IntPtr pbc,
+                [MarshalAs(UnmanagedType.LPWStr)] string pszDisplayName,
+                out uint pchEaten, out IntPtr ppidl, ref uint pdwAttributes);
+            int EnumObjects(IntPtr hwnd, int grfFlags, out IntPtr ppenumIDList);
+            int BindToObject(IntPtr pidl, IntPtr pbc, ref Guid riid, out IntPtr ppv);
+            int BindToStorage(IntPtr pidl, IntPtr pbc, ref Guid riid, out IntPtr ppv);
+            int CompareIDs(IntPtr lParam, IntPtr pidl1, IntPtr pidl2);
+            int CreateViewObject(IntPtr hwndOwner, ref Guid riid, out IntPtr ppv);
+            int GetAttributesOf(uint cidl, IntPtr apidl, ref uint rgfInOut);
+            int GetUIObjectOf(IntPtr hwndOwner, uint cidl, IntPtr apidl,
+                ref Guid riid, IntPtr rgfReserved, out IntPtr ppv);
+            int GetDisplayNameOf(IntPtr pidl, uint uFlags, out STRRET lpName);
+            int SetNameOf(IntPtr hwnd, IntPtr pidl,
+                [MarshalAs(UnmanagedType.LPWStr)] string pszName, uint uFlags, out IntPtr ppidlOut);
+        }
+
+        private const int SVGIO_ALLVIEW = 0x2;
+        private const int SIGDN_DESKTOPABSOLUTEPARSING = unchecked((int)0x80058000);
+        private const uint SHGDN_FORPARSING = 0x8000;
+
+        /// <summary>
+        /// IShellBrowser（IID 000214E2-…-C000-000000000046）。
+        /// 方法顺序必须严格照 shlobj.h 排：对 InterfaceIsIUnknown 接口，C# 声明的方法从 vtable 槽 3 起，
+        /// 少写一个或写错顺序，后面所有调用都会落到别的槽位上（轻则返回 E_FAIL，重则进程崩）。
+        /// 这里用到两个：GetWindow()（槽 3，反查标签页 hwnd）与
+        /// QueryActiveShellView()（槽 14，取当前视图 —— 拿视图顺序用）。
         /// </summary>
         [ComImport, Guid("000214E2-0000-0000-C000-000000000046")]
         [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
         private interface IShellBrowser
         {
+            // ---- IOleWindow ----
             IntPtr GetWindow();
+            int ContextSensitiveHelp(int fEnterMode);
+            // ---- IShellBrowser ----
+            int InsertMenusSB(IntPtr hmenuShared, IntPtr lpMenuWidths);
+            int SetMenuSB(IntPtr hmenuShared, IntPtr holemenuRes, IntPtr hwndActiveObject);
+            int RemoveMenusSB(IntPtr hmenuShared);
+            int SetStatusTextSB([MarshalAs(UnmanagedType.LPWStr)] string pszStatusText);
+            int EnableModelessSB(int bEnable);
+            int TranslateAcceleratorSB(IntPtr pmsg, ushort wID);
+            int BrowseObject(IntPtr pidl, uint wFlags);
+            int GetViewStateStream(uint grfMode, out IntPtr ppStrm);
+            IntPtr GetControlWindow(uint id);
+            int SendControlMsg(uint id, uint uMsg, IntPtr wParam, IntPtr lParam, out IntPtr pret);
+            int QueryActiveShellView(out IntPtr ppshv);
+            int OnViewWindowActive(IntPtr pshv);
+            int SetToolbarItems(IntPtr lpButtons, uint nButtons, uint uFlags);
+        }
+
+        /// <summary>
+        /// IFolderView（IID cde725b0-…），只用到 Item / ItemCount。
+        /// 它给出的是「资源管理器当前视图里的项顺序」，会跟随用户选的排序方式
+        /// （名称/日期/类型/大小、升序降序），也就是用户眼睛看到的那个顺序。
+        /// </summary>
+        [ComImport, Guid("cde725b0-ccc9-4519-917e-325d72fab4ce")]
+        [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        private interface IFolderView
+        {
+            int GetCurrentViewMode(out uint pViewMode);
+            int SetCurrentViewMode(uint ViewMode);
+            int GetFolder(ref Guid riid, out IntPtr ppv);
+            int Item(int iItemIndex, out IntPtr ppidl);
+            int ItemCount(uint uFlags, out int pcItems);
         }
 
         /// <summary>
@@ -471,8 +558,178 @@ namespace QuickPreview
             return false;
         }
 
-        private static string _lastSelectedPath;
-        private static long _lastSelectTick;
+        /// <summary>
+        /// 前台窗口就是资源管理器时返回它，否则返回零。
+        /// 「按空格那一刻」用它确定翻页列表应该取自哪个窗口。
+        /// </summary>
+        public static IntPtr HostWindow()
+        {
+            IntPtr fg = GetForegroundWindow();
+            string cls = ClassNameOf(fg);
+            return (cls == "CabinetWClass" || cls == "ExploreWClass") ? fg : IntPtr.Zero;
+        }
+
+        /// <summary>
+        /// 取资源管理器**当前视图里的项顺序**（绝对路径）。
+        ///
+        /// 【为什么必须问资源管理器，而不是自己排序】
+        /// 用户看到的是「按名称/日期/类型/大小」排好序的列表，规则由资源管理器决定，
+        /// 甚至同一批中文文件名用 StringComparer.Ordinal 和 StrCmpLogicalW 排出来的
+        /// 结果都不一致。以前自己 Directory.GetFiles + Ordinal 排序，导致按方向键时
+        /// 「下一个」跑到的文件跟看到的完全对不上，表现为毫无规律地乱跳。
+        /// 现在直接取视图顺序：VisualHost → IShellBrowser::QueryActiveShellView → IFolderView，
+        /// 拿到的就是屏幕上那个顺序，用户改排序方式也自动跟随。
+        ///
+        /// 取不到时返回 null，调用方退回自己的排序（绝不能因为这个失败就不给翻页）。
+        /// </summary>
+        public static List<string> GetViewOrder(IntPtr explorerHwnd, string mustContain = null)
+        {
+            if (explorerHwnd == IntPtr.Zero) return null;
+
+            try
+            {
+                var shellType = Type.GetTypeFromProgID("Shell.Application");
+                if (shellType == null) return null;
+                dynamic shell = Activator.CreateInstance(shellType);
+
+                // 多标签页时同一个 hwnd 下有多个 ShellWindow，优先取活动标签那个
+                var tabWindows = EnumTabWindows(explorerHwnd);
+                IntPtr activeTab = tabWindows.Count > 0 ? tabWindows[0] : IntPtr.Zero;
+
+                var strict = new List<object>();
+                var loose = new List<object>();
+                foreach (var w in shell.Windows())
+                {
+                    try
+                    {
+                        if (Convert.ToInt64(w.HWND) != explorerHwnd.ToInt64()) continue;
+                        loose.Add(w);
+                        if (activeTab == IntPtr.Zero) continue;
+                        IntPtr? tab = TabHwndOf(w);
+                        if (tab.HasValue && tab.Value == activeTab) strict.Add(w);
+                    }
+                    catch { /* 单个窗口出错不影响其它窗口 */ }
+                }
+
+                // 活动标签判据不一定可靠（Win11 各版本表现不同），
+                // 所以不是"只试第一个"：顺着候选挨个试，谁能给出包含当前文件的顺序就用谁。
+                List<string> fallback = null;
+                foreach (var w in (strict.Concat(loose)))
+                {
+                    var list = ViewOrderOf(w);
+                    if (list == null || list.Count == 0) continue;
+
+                    if (string.IsNullOrEmpty(mustContain)) return list;
+
+                    foreach (var p in list)
+                    {
+                        if (!string.Equals(p, mustContain, StringComparison.OrdinalIgnoreCase)) continue;
+                        Log.D(LogKind.Hook, "视图顺序：" + list.Count + " 项，已定位当前文件");
+                        return list;
+                    }
+                    if (fallback == null) fallback = list;
+                }
+                return fallback;
+            }
+            catch (Exception ex)
+            {
+                Log.D(LogKind.Hook, "取资源管理器视图顺序失败：" + ex.Message);
+            }
+            return null;
+        }
+
+        /// <summary>单个 ShellWindow 的视图顺序；失败返回 null。</summary>
+        private static List<string> ViewOrderOf(object shellWindow)
+        {
+            IntPtr pUnk = IntPtr.Zero, pSp = IntPtr.Zero, pBr = IntPtr.Zero, pView = IntPtr.Zero, pFv = IntPtr.Zero;
+            try
+            {
+                pUnk = Marshal.GetIUnknownForObject(shellWindow);
+                if (pUnk == IntPtr.Zero) return null;
+
+                Guid iidSp = typeof(IShellServiceProvider).GUID;
+                if (Marshal.QueryInterface(pUnk, ref iidSp, out pSp) != 0 || pSp == IntPtr.Zero)
+                    return null;
+
+                var sp = (IShellServiceProvider)Marshal.GetObjectForIUnknown(pSp);
+                Guid iidBr = typeof(IShellBrowser).GUID;
+                // 【坑，v1.9.4】第一个参数必须是 SID_STopLevelBrowser。
+                // 拿 IShellBrowser 的 IID 顶替不会报错，但返回的是默认浏览器（实测是桌面那个），
+                // 于是 QueryActiveShellView 给出桌面视图、枚举出来的路径全是
+                // C:\Users\<用户>\Desktop\...，与当前文件永远匹配不上。
+                Guid sidTopLevel = new Guid("4C96BE40-915C-11CF-99D3-00AA004AE837");
+                if (sp.QueryService(ref sidTopLevel, ref iidBr, out pBr) != 0 || pBr == IntPtr.Zero)
+                    return null;
+
+                var browser = (IShellBrowser)Marshal.GetObjectForIUnknown(pBr);
+                if (browser.QueryActiveShellView(out pView) != 0 || pView == IntPtr.Zero)
+                    return null;
+
+                Guid iidFv = typeof(IFolderView).GUID;
+                if (Marshal.QueryInterface(pView, ref iidFv, out pFv) != 0 || pFv == IntPtr.Zero)
+                    return null;
+
+                var fv = (IFolderView)Marshal.GetObjectForIUnknown(pFv);
+                if (fv.ItemCount(SVGIO_ALLVIEW, out int count) != 0 || count <= 0)
+                    return null;
+
+                // 【坑，v1.9.4】IFolderView::Item 返回的是「相对于该文件夹的子 PIDL」。
+                // 直接丢给 SHGetNameFromIDList，它会把子 PIDL 当成桌面命名空间下的项来解析，
+                // 于是所有路径都变成 C:\Users\<用户>\Desktop\<文件名> —— 列表能列出来、名字也对，
+                // 但路径全错，跟当前文件永远匹配不上（表现为"视图顺序里没有当前文件"）。
+                // 正确做法：拿父 IShellFolder 用 GetDisplayNameOf(SHGDN_FORPARSING)。
+                IntPtr pFolder = IntPtr.Zero;
+                IShellFolder folder = null;
+                try
+                {
+                    Guid iidSf = typeof(IShellFolder).GUID;
+                    if (fv.GetFolder(ref iidSf, out pFolder) == 0 && pFolder != IntPtr.Zero)
+                        folder = (IShellFolder)Marshal.GetObjectForIUnknown(pFolder);
+                }
+                catch { /* 拿不到父文件夹就返回空，调用方回退自排序 */ }
+
+                var list = new List<string>(count);
+                for (int i = 0; i < count; i++)
+                {
+                    if (fv.Item(i, out IntPtr pidl) != 0 || pidl == IntPtr.Zero) continue;
+                    try
+                    {
+                        string s = null;
+                        if (folder != null && folder.GetDisplayNameOf(pidl, SHGDN_FORPARSING, out STRRET sr) == 0)
+                        {
+                            var sb = new StringBuilder(520);
+                            if (StrRetToBufW(ref sr, pidl, sb, sb.Capacity) == 0) s = sb.ToString();
+                        }
+                        if (!string.IsNullOrEmpty(s)) list.Add(s);
+                    }
+                    finally { Marshal.FreeCoTaskMem(pidl); }
+                }
+                if (pFolder != IntPtr.Zero) Marshal.Release(pFolder);
+                return list;
+            }
+            catch (Exception ex)
+            {
+                Log.D(LogKind.Hook, "读 IFolderView 失败：" + ex.Message);
+                return null;
+            }
+            finally
+            {
+                if (pFv != IntPtr.Zero) Marshal.Release(pFv);
+                if (pView != IntPtr.Zero) Marshal.Release(pView);
+                if (pBr != IntPtr.Zero) Marshal.Release(pBr);
+                if (pSp != IntPtr.Zero) Marshal.Release(pSp);
+                if (pUnk != IntPtr.Zero) Marshal.Release(pUnk);
+            }
+        }
+
+        /// <summary>兜底排序：资源管理器「名称」列的口径（数字感知 + locale）。</summary>
+        public static void SortNatural(List<string> list)
+        {
+            try { list.Sort((a, b) => StrCmpLogicalW(a, b)); }
+            catch { list.Sort(StringComparer.OrdinalIgnoreCase); }
+        }
+
+        private static string _lastSelectedPath;        private static long _lastSelectTick;
 
         private static bool TrySelect(dynamic w, string dir, string name, string path)
         {
